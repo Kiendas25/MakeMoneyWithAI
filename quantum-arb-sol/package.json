@@ -12,6 +12,8 @@
     "dev:ui": "vite",
     "bench": "node --import tsx src/ui/cli.ts --bench",
     "backtest": "node --import tsx src/ui/cli.ts --backtest",
+    "preview": "node --import tsx src/ui/cli.ts --preview",
+    "snapshot": "node --import tsx src/ui/cli.ts --snapshot",
     "build": "tsc -p tsconfig.json && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

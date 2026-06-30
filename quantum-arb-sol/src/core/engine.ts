@@ -37,6 +37,7 @@ export class Engine {
   private inFlight = false;
   private tickSeq = 0;
   private droppedTicks = 0;
+  private notionalUsd: number; // global paper trade size, runtime-mutable
 
   constructor(deps: EngineDeps) {
     this.cfg = deps.config;
@@ -48,12 +49,30 @@ export class Engine {
       refreshMs: this.cfg.tickIntervalMs,
     });
     this.risk = new RiskModel(this.cfg.risk);
+    this.notionalUsd = this.cfg.risk.maxNotionalUsd;
+  }
+
+  /**
+   * Set the global paper trade notional (USD). Paper-only sizing — adjusts the
+   * detector probe size and the risk cap; it never touches signing/execution
+   * (there is none). Emitted on the bus so every connected client reflects it.
+   */
+  setNotional(usd: number): void {
+    if (!Number.isFinite(usd) || usd <= 0) return;
+    this.notionalUsd = usd;
+    this.risk.setMaxNotional(usd);
+    this.bus.emit('sizing', { notionalUsd: usd });
+  }
+
+  getNotional(): number {
+    return this.notionalUsd;
   }
 
   /** Resolve universe (present-in-all-venues filter) before the loop starts. */
   async init(): Promise<readonly ActivePair[]> {
     const { active, dropped } = await this.universe.resolve(this.registry.all());
     this.active = active;
+    this.bus.emit('sizing', { notionalUsd: this.notionalUsd });
     if (dropped.length) {
       for (const d of dropped) {
         this.bus.emit('error', {
@@ -138,7 +157,8 @@ export class Engine {
     }
     this.bus.emit('quotes', quotes);
 
-    const opps = detect(quotes, this.cfg.detector);
+    const detectorCfg = { ...this.cfg.detector, probeNotionalUsd: this.notionalUsd };
+    const opps = detect(quotes, detectorCfg);
     let fills = 0;
     const ledgerForCtx = this.paper.snapshot();
     const inventory = new Map<string, number>();

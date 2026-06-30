@@ -69,7 +69,24 @@ npm run bench              # synthetic throughput (checks/sec, p50/p99)
 npm run dev:engine         # live engine + local WS server
 npm run dev:ui             # Vite dashboard (connects to the engine WS)
 npm run backtest -- data/sample.ndjson
+npm run preview            # interactive standalone HTML (synthetic, no network)
+npm run snapshot -- 20 out.html   # run live N ticks → interactive HTML
 ```
+
+## Interactivity — trade montante
+
+The global per-trade **montante (USD)** is set live in the dashboard
+(`Montante por trade` field) and applied to the paper simulator. Under the hood
+the UI sends a single narrow command over the WS — `set_sizing { notionalUsd }`
+— validated and clamped server-side. This is **paper sizing only**: it adjusts
+the detector probe size and the risk cap; it never signs or sends anything (the
+no-signer guard rail is intact, enforced by `test/no-signer.test.ts`).
+
+For mobile, `npm run preview` emits a **self-contained interactive HTML**: open
+it, type the montante, and net bps / PnL recompute in the browser. The embedded
+recompute mirrors `models/slippage.ts` + `models/arbitrage.ts`; the engine and
+backtester remain the authoritative path. `npm run snapshot` does the same but
+embeds a real live-captured tick instead of synthetic quotes.
 
 ## Status (offline scaffolding)
 

@@ -21,7 +21,12 @@ export type RiskVerdict =
   | { ok: false; reason: string };
 
 export class RiskModel {
-  constructor(private readonly cfg: RiskConfig) {}
+  constructor(private cfg: RiskConfig) {}
+
+  /** Runtime override of the per-leg notional cap (paper sizing). */
+  setMaxNotional(usd: number): void {
+    if (Number.isFinite(usd) && usd > 0) this.cfg = { ...this.cfg, maxNotionalUsd: usd };
+  }
 
   /** Decide whether an opportunity may be (paper-)executed, and at what size. */
   evaluate(opp: Opportunity, ctx: RiskContext): RiskVerdict {

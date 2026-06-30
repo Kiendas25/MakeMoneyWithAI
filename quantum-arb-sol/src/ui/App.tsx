@@ -2,12 +2,25 @@
 // renders live spreads, opportunities, and paper PnL per pair. No controls that
 // could trigger execution — the engine exposes no command channel.
 
+import { useEffect, useState } from 'react';
 import { useEngineSocket } from './useEngineSocket.js';
 
 const WS_URL = `ws://localhost:${import.meta.env.VITE_ENGINE_WS_PORT ?? 8787}`;
 
 export default function App() {
-  const { connected, quotesByPair, opportunities, ledger, lastMetric } = useEngineSocket(WS_URL);
+  const { connected, quotesByPair, opportunities, ledger, lastMetric, notionalUsd, setNotional } =
+    useEngineSocket(WS_URL);
+
+  // Local input mirrors the engine's global notional; applying sends it back.
+  const [draft, setDraft] = useState('');
+  useEffect(() => {
+    if (notionalUsd > 0 && draft === '') setDraft(String(notionalUsd));
+  }, [notionalUsd, draft]);
+
+  const apply = () => {
+    const n = Number(draft);
+    if (Number.isFinite(n) && n > 0) setNotional(n);
+  };
 
   return (
     <div style={S.page}>
@@ -16,6 +29,23 @@ export default function App() {
         <span style={S.tag}>simulation · backtest · paper-trade — no real execution</span>
         <span style={{ ...S.dot, background: connected ? '#21c074' : '#c0392b' }} />
       </header>
+
+      <div style={S.controls}>
+        <label style={S.label}>Montante por trade (USD)</label>
+        <input
+          style={S.input}
+          type="number"
+          min={1}
+          step={100}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && apply()}
+        />
+        <button style={S.btn} onClick={apply} disabled={!connected}>
+          Aplicar
+        </button>
+        <span style={S.current}>atual: ${notionalUsd.toLocaleString()}</span>
+      </div>
 
       {lastMetric && (
         <div style={S.metrics}>
@@ -105,6 +135,11 @@ const S: Record<string, React.CSSProperties> = {
   tag: { fontSize: 12, color: '#8b949e' },
   dot: { width: 10, height: 10, borderRadius: '50%', marginLeft: 'auto' },
   metrics: { fontSize: 12, color: '#8b949e', margin: '12px 0' },
+  controls: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '14px 0', padding: 12, background: '#161b22', border: '1px solid #30363d', borderRadius: 8 },
+  label: { fontSize: 13, color: '#8b949e' },
+  input: { background: '#0d1117', color: '#e6edf3', border: '1px solid #30363d', borderRadius: 6, padding: '6px 10px', fontFamily: 'inherit', fontSize: 14, width: 140 },
+  btn: { background: '#21c074', color: '#04210f', border: 'none', borderRadius: 6, padding: '7px 14px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
+  current: { fontSize: 12, color: '#8b949e', marginLeft: 'auto' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 16 },
   panel: { background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 14 },
   panelTitle: { fontSize: 13, color: '#8b949e', marginBottom: 10, textTransform: 'uppercase' },

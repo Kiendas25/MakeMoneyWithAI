@@ -1,11 +1,11 @@
 // React hook: subscribe to the engine's read-only WS stream and expose the
 // latest derived state. Auto-reconnects. Pure consumer — never sends commands.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Quote } from '../exchange/types.js';
 import type { Opportunity } from '../models/arbitrage.js';
 import type { LedgerSnapshot } from '../simulator/paper.js';
-import type { TickMetric } from '../core/bus.js';
+import type { TickMetric, SizingState } from '../core/bus.js';
 import type { WsMessage } from '../core/wsserver.js';
 
 export interface EngineState {
@@ -14,15 +14,21 @@ export interface EngineState {
   opportunities: Opportunity[];
   ledger: LedgerSnapshot | null;
   lastMetric: TickMetric | null;
+  notionalUsd: number;
 }
 
-export function useEngineSocket(url: string): EngineState {
+export interface EngineSocket extends EngineState {
+  setNotional: (usd: number) => void; // paper sizing command
+}
+
+export function useEngineSocket(url: string): EngineSocket {
   const [state, setState] = useState<EngineState>({
     connected: false,
     quotesByPair: {},
     opportunities: [],
     ledger: null,
     lastMetric: null,
+    notionalUsd: 0,
   });
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -52,7 +58,14 @@ export function useEngineSocket(url: string): EngineState {
     };
   }, [url]);
 
-  return state;
+  const setNotional = useCallback((usd: number) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'set_sizing', payload: { notionalUsd: usd } }));
+    }
+  }, []);
+
+  return { ...state, setNotional };
 }
 
 function reduce(s: EngineState, msg: WsMessage): EngineState {
@@ -71,6 +84,8 @@ function reduce(s: EngineState, msg: WsMessage): EngineState {
       return { ...s, ledger: msg.payload as LedgerSnapshot };
     case 'metric':
       return { ...s, lastMetric: msg.payload as TickMetric };
+    case 'sizing':
+      return { ...s, notionalUsd: (msg.payload as SizingState).notionalUsd };
     default:
       return s;
   }

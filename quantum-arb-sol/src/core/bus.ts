@@ -16,12 +16,17 @@ export interface TickMetric {
   droppedTicks: number;
 }
 
+export interface SizingState {
+  notionalUsd: number; // global paper notional applied per opportunity
+}
+
 export interface BusEvents {
   quotes: [Quote[]];
   opportunity: [Opportunity];
   fill: [Fill];
   metric: [TickMetric];
   ledger: [LedgerSnapshot];
+  sizing: [SizingState];
   error: [{ where: string; message: string }];
 }
 
