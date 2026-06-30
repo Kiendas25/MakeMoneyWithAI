@@ -1,0 +1,4 @@
+# Historical snapshots are large and reproducible — keep the dir, ignore data.
+*.ndjson
+*.json
+!sample.ndjson

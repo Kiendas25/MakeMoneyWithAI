@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": false,
+    "sourceMap": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["src/core/*"],
+      "@exchange/*": ["src/exchange/*"],
+      "@dex/*": ["src/dex/*"],
+      "@cex/*": ["src/cex/*"],
+      "@models/*": ["src/models/*"],
+      "@backtester/*": ["src/backtester/*"],
+      "@simulator/*": ["src/simulator/*"]
+    }
+  },
+  "include": ["src", "test"],
+  "exclude": ["node_modules", "dist", "data"]
+}
