@@ -2,6 +2,13 @@
 
 **Make Money With AI** is a curated list of AI tools and projects that help you turn open-source into income.
 
+> 📊 **378 projects** · 🗓️ Last updated **2026-06-30** · ranked by GitHub stars (☆)
+
+Each entry links to the project and includes a one-line take on how its capabilities can be turned into revenue.
+
+
+## 🏆 100k+ Stars
+
 1. **[AutoGPT](https://github.com/Significant-Gravitas/AutoGPT)** | ☆178.8k | Use **autonomous agents**, **task automation**, and extensible **plugin** integrations to build commercially scalable SaaS, automated services, marketplace products, and monetizable workflow solutions via **prompt engineering**.
 2. **[stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui)** | ☆157.0k | Provides a production-ready **AI-image** web UI with **custom-models**, **batch-processing**, **plugins**, and exportable **commercial-assets**, enabling rapid monetization via services, prints, licensing, merchandise, marketplaces, subscriptions, ads, API-integrations.
 3. **[JavaGuide](https://github.com/Snailclimb/JavaGuide)** | ☆155.8k | Comprehensive **Java** and backend interview guide enables monetization via corporate **training**, paid **courses**, developer upskilling, recruitment services, system design consulting, and **AI** product acceleration strategies.
@@ -12,6 +19,9 @@
 8. **[langchain](https://github.com/langchain-ai/langchain)** | ☆116.5k | Accelerates monetization by enabling **LLM**-powered **agents**, reusable **chains**, **retrieval**, **embeddings**, **vector-stores**, connectors, **memory**, monitoring and orchestration for **SaaS** automated workflows, analytics, billing integration, rapid prototyping.
 9. **[dify](https://github.com/langgenius/dify)** | ☆115.6k | Monetize AI workflows with a production-ready platform for building, automating and orchestrating agentic pipelines, offering **scalable**, **integratable**, **low-code**, **monitorable** and **extensible** capabilities across industries globally
 10. **[open-webui](https://github.com/open-webui/open-webui)** | ☆111.4k | Offers a **user-friendly** interface for **OpenAI**/**Ollama** and local models, enabling rapid **prototyping**, **deployment**, **self-hosting**, extensions, monetizable **apps**, automation, and **APIs**, white-labeling, scaling, customization, integrations, revenue.
+
+## 🔥 50k – 100k Stars
+
 11. **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)** | ☆89.8k | Turn a **modular** diffusion GUI with **graph/nodes** workflows and **API**/backend into revenue via custom pipelines, automated content generation, SaaS imaging tools, and plugin integration marketplaces.
 12. **[supabase](https://github.com/supabase/supabase)** | ☆89.4k | Monetize apps using **Postgres**, auto-generated **APIs**, **auth**, **realtime**, **storage**, billing, analytics, and integrations to build scalable web, mobile, and **AI** services with low code workflows.
 13. **[system-prompts-and-models-of-ai-tools](https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools)** | ☆89.1k | Curated **system prompts** and **AI models** accelerate productization of developer tools, enabling rapid **automation**, improved **code productivity**, and new **SaaS** and consulting revenue streams.
@@ -32,6 +42,9 @@
 28. **[meilisearch](https://github.com/meilisearch/meilisearch)** | ☆53.4k | **Lightning-fast** and **AI-powered hybrid search** API accelerates site/app relevance, measurably boosts conversions, personalizes experiences, increases retention, and enables monetization through analytics, scalability, and easy integrations.
 29. **[autogen](https://github.com/microsoft/autogen)** | ☆50.3k | Monetize via **agentic AI**: build scalable **automation** products, deploy customizable **AI agents** for enterprise workflows, accelerate time-to-market, reduce operating costs, and capture recurring revenue streams.
 30. **[OpenManus](https://github.com/FoundationAgents/OpenManus)** | ☆50.1k | Open-source multi-agent AI toolkit enabling rapid development of autonomous content, automation, and SaaS products for monetization through **APIs**, **plugins**, **workflows**, **scalable**, **cloud** **integrations** to monetize.
+
+## ⭐ 25k – 50k Stars
+
 31. **[anything-llm](https://github.com/Mintplex-Labs/anything-llm)** | ☆49.6k | Turn a local or Docker deployment into revenue by deploying **RAG**, scalable **AI agents**, a **No-code** agent builder, and **MCP**-compatible integrations for monetized apps and subscriptions
 32. **[claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice)** | ☆46.6k | Provides **Claude**-centric **best-practices**, agentic engineering examples and templates to accelerate AI productization, automate workflows, reduce development time, cut costs, increase **monetization**, and drive recurring revenue
 33. **[unsloth](https://github.com/unslothai/unsloth)** | ☆46.4k | Enable profitable LLM services by offering **fine-tuning**, **reinforcement learning**, and multi-model support, delivering **2x faster** training, **70% VRAM** savings, and cheaper deployment for SaaS startups.
@@ -89,6 +102,9 @@
 85. **[composio](https://github.com/ComposioHQ/composio)** | ☆25.7k | Monetize AI by rapidly connecting LLM agents to 100+ **integrations**, enabling payment, analytics, CRM, commerce, and support **workflows** through secure, scalable **function-calling** enterprise revenue-driving automation.
 86. **[facefusion](https://github.com/facefusion/facefusion)** | ☆25.3k | Monetize **face** manipulation via **entertainment**, **advertising**, **VFX**, **AR**, **filters**, **personalization**, virtual try-ons, **SaaS**, **APIs**, creator tools, licensing, subscriptions, brand partnerships, influencer campaigns, plugin marketplace, white-label.
 87. **[openclaude](https://github.com/Gitlawb/openclaude)** | ☆25.1k | Open-source platform enabling **multi-model** integration, **toolchain** automation, and **scalable** deployment, rapid customization for building monetizable AI products, white-label APIs, enterprise integrations, and subscription revenue streams.
+
+## 🌱 10k – 25k Stars
+
 88. **[kratos](https://github.com/go-kratos/kratos)** | ☆24.9k | Enable rapid development of scalable **Go** microservices for **cloud-native** deployments, reducing costs and accelerating revenue through **SaaS**, **API** products, and enterprise integrations with observability, reliability
 89. **[modular](https://github.com/modular/modular)** | ☆24.9k | Provides **high-performance** model development and **scalable inference** tooling (MAX, Mojo) to accelerate deployment, reduce inference costs, and monetize AI products via reliable, efficient, secure services.
 90. **[self-llm](https://github.com/datawhalechina/self-llm)** | ☆24.8k | Provides **Linux**-based guides to **fine-tune** (full/LORA), **deploy** LLMs/MLLMs domestically and internationally enabling monetizable **SaaS**, **apps**, and **consulting** services, training, API integration, automation, and enterprise adoption.
@@ -379,4 +395,7 @@
 375. **[metaflow](https://github.com/Netflix/metaflow)** | ☆10.0k | Enables rapid **productionization** of ML pipelines with reproducible workflows, scalable orchestration, model **versioning**, automated **deployment**, and monitoring to accelerate revenue-generating AI products and reduce costs.
 376. **[openvino](https://github.com/openvinotoolkit/openvino)** | ☆10.0k | Enables **model optimization**, **hardware acceleration**, and streamlined **deployment** of low-latency AI **inference**, reducing costs, improving throughput, and accelerating monetizable edge and cloud services and revenue.
 377. **[InternVL](https://github.com/OpenGVLab/InternVL)** | ☆10.0k | Monetize by integrating, fine-tuning, and deploying this **open-source** **multimodal** dialogue model—near **GPT-4o** capabilities—for **SaaS**, enterprise automation, content, marketplaces, and API services, subscription, consulting, licensing, support.
+
+## 🧪 Under 10k Stars
+
 378. **[openai-realtime-agents](https://github.com/openai/openai-realtime-agents)** | ☆6.5k | Demonstrates building **Realtime**-powered autonomous **agents** to monetize via virtual **assistants**, workflow **automations**, analytics, premium **SaaS** integrations, subscription features, developer APIs for rapid prototyping and scaling.
