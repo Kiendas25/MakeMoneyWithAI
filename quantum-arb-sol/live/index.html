@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Quantum-Arb-SOL — LIVE paper-trade</title>
+<title>Quantum-Arb-SOL — LIVE multi-CEX paper-trade</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0d1117;color:#e6edf3;padding:14px}
@@ -12,24 +12,29 @@ h1{font-size:17px;margin:0}
 .tag{font-size:11px;color:#8b949e}
 .dot{width:10px;height:10px;border-radius:50%;margin-left:auto;background:#c0392b;transition:background .3s}
 .dot.on{background:#21c074}
-.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0;padding:11px;background:#161b22;border:1px solid #30363d;border-radius:8px}
+.card{margin:12px 0;padding:12px;background:#161b22;border:1px solid #30363d;border-radius:10px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 label{font-size:12px;color:#8b949e}
-input{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:8px 9px;font-family:inherit;font-size:16px;width:110px}
-input.sm{width:74px}
+input{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:8px 9px;font-family:inherit;font-size:16px;width:96px}
+input.sm{width:64px}
 button{background:#21c074;color:#04210f;border:none;border-radius:6px;padding:8px 12px;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px}
 button.alt{background:#30363d;color:#e6edf3}
-.venues{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;font-size:11px}
+.fees{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.fees .f{display:flex;flex-direction:column;gap:3px}
+.fees input{width:100%}
+.venues{display:flex;gap:6px;flex-wrap:wrap;font-size:11px}
 .vchip{padding:3px 8px;border-radius:20px;border:1px solid #30363d;color:#8b949e}
 .vchip.ok{border-color:#21c074;color:#21c074}.vchip.err{border-color:#c0392b;color:#c0392b}
 .metrics{font-size:11px;color:#8b949e;margin:8px 0;line-height:1.6}
-.grid{display:grid;grid-template-columns:1fr;gap:12px}
-.panel{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:13px}
 .ptitle{font-size:12px;color:#8b949e;margin-bottom:9px;text-transform:uppercase;letter-spacing:.5px}
+.hint{font-size:11px;color:#8b949e;margin-bottom:8px}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{text-align:left;color:#8b949e;border-bottom:1px solid #30363d;padding:5px 5px;font-weight:600}
 td{padding:5px 5px;border-bottom:1px solid #21262d}
-.pos{color:#21c074;font-weight:700}.neg{color:#c0392b}
+.pos{color:#21c074;font-weight:700}.neg{color:#c0392b}.mut{color:#8b949e}
 .pnl{font-size:32px;font-weight:800}.sub{font-size:12px;color:#8b949e;margin-top:3px}
+.badge{font-size:10px;padding:2px 7px;border-radius:10px;border:1px solid #30363d}
+.badge.act{border-color:#21c074;color:#21c074}.badge.near{border-color:#30363d;color:#8b949e}
 .banner{font-size:11px;color:#8b949e;margin-top:14px;border-top:1px solid #21262d;padding-top:9px;line-height:1.5}
 .warn{color:#e3b341}
 </style>
@@ -37,68 +42,74 @@ td{padding:5px 5px;border-bottom:1px solid #21262d}
 <body>
 <div class="head">
   <h1>Quantum-Arb-SOL · LIVE</h1>
-  <span class="tag">paper-trade — sem execução real</span>
+  <span class="tag">multi-CEX · paper-trade — sem execução real</span>
   <span class="dot" id="dot"></span>
 </div>
 
-<div class="controls">
-  <label>Montante (USD)</label>
-  <input id="notional" type="number" min="1" step="100" inputmode="decimal" value="10000">
-  <label>Min edge (bps)</label>
-  <input id="minedge" class="sm" type="number" min="0" step="1" value="5">
-  <label>Refresh (s)</label>
-  <input id="interval" class="sm" type="number" min="3" step="1" value="8">
-  <button id="toggle">▶ Start</button>
-  <button id="once" class="alt">↻ Agora</button>
-  <button id="reset" class="alt">Reset paper</button>
+<div class="card">
+  <div class="row">
+    <div><label>Montante (USD)</label><br><input id="notional" type="number" min="1" step="100" inputmode="decimal" value="10000"></div>
+    <div><label>Min edge (bps)</label><br><input id="minedge" class="sm" type="number" step="1" value="5"></div>
+    <div><label>Refresh (s)</label><br><input id="interval" class="sm" type="number" min="3" step="1" value="8"></div>
+    <button id="toggle">▶ Start</button>
+    <button id="once" class="alt">↻ Agora</button>
+    <button id="reset" class="alt">Reset</button>
+  </div>
+  <div class="fees" id="fees"></div>
+  <div class="row" style="margin-top:8px">
+    <button id="std" class="alt">Standard</button>
+    <button id="vip">VIP / Maker</button>
+  </div>
 </div>
 
-<div class="venues" id="venues"></div>
+<div class="card"><div class="ptitle">Venue status</div><div class="venues" id="venuesStatus"></div></div>
 <div class="metrics" id="metrics">à espera do primeiro refresh…</div>
 
-<div class="grid">
-  <div class="panel"><div class="ptitle">Spreads ao vivo</div>
-    <table><thead><tr><th>Par</th><th>Venue</th><th>Bid</th><th>Ask</th></tr></thead><tbody id="spreads"></tbody></table></div>
-  <div class="panel"><div class="ptitle">Oportunidades (net bps, net de fees+slippage)</div>
-    <table><thead><tr><th>Par</th><th>Buy</th><th>Sell</th><th>Net bps</th></tr></thead><tbody id="opps"></tbody></table></div>
-  <div class="panel"><div class="ptitle">Paper PnL acumulado</div>
-    <div class="pnl" id="pnl">$0.00</div>
-    <div class="sub" id="pnlsub">0 fills · 0 refreshes</div></div>
-  <div class="panel"><div class="ptitle">Últimos fills (paper)</div>
-    <table><thead><tr><th>Hora</th><th>Par</th><th>Rota</th><th>Net bps</th><th>PnL</th></tr></thead><tbody id="log"></tbody></table></div>
-</div>
+<div class="card"><div class="ptitle">Spreads ao vivo (USDT)</div>
+  <table><thead><tr><th>Par</th><th>Venue</th><th>Bid</th><th>Ask</th></tr></thead><tbody id="spreads"></tbody></table></div>
+
+<div class="card"><div class="ptitle">Oportunidades</div>
+  <div class="hint">Melhor rota por par. Mais venues = mais hipótese de uma estar fora de linha. ACTIONABLE só quando net ≥ Min edge.</div>
+  <table><thead><tr><th>Par</th><th>Buy</th><th>Sell</th><th>Net bps</th><th>Status</th></tr></thead><tbody id="opps"></tbody></table></div>
+
+<div class="card"><div class="ptitle">Paper PnL</div>
+  <div class="pnl" id="pnl">$0.00</div><div class="sub" id="pnlsub">0 fills · 0 refreshes</div></div>
+
+<div class="card"><div class="ptitle">Últimos fills</div>
+  <table><thead><tr><th>Hora</th><th>Par</th><th>Rota</th><th>Net</th><th>PnL</th></tr></thead><tbody id="log"></tbody></table></div>
 
 <div class="banner" id="banner"></div>
 
 <script>
-// ===================== Live paper-trade engine (browser) =====================
-// Public market data, no auth. Fetches run from YOUR device, so this works even
-// where a server's egress policy blocks the exchanges. Mirrors the repo's
-// models/slippage.ts + models/arbitrage.ts. No signing, no order execution.
+// ===== Multi-CEX live paper-trade (browser). Public data, no auth, no signing. =====
+// Venues: binance, coinbase, kraken, okx, bybit (CEX) + jupiter (Solana DEX, SOL only).
+// All pairs quoted in USDT so we never mistake the USDT/USDC basis for arbitrage.
 
+const VENUE_ORDER = ['binance','coinbase','kraken','okx','bybit','jupiter'];
 const MINTS = {
   SOL:  {mint:'So11111111111111111111111111111111111111112', dec:9},
-  USDC: {mint:'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', dec:6},
   USDT: {mint:'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', dec:6},
 };
-// Per-pair venue mapping. Jupiter only for Solana-native SOL pairs.
 const PAIRS = [
-  {key:'SOL/USDC', binance:'SOLUSDC', coinbase:'SOL-USDC', jup:{in:'SOL',out:'USDC'}},
-  {key:'SOL/USDT', binance:'SOLUSDT', coinbase:'SOL-USDT', jup:{in:'SOL',out:'USDT'}},
-  {key:'BTC/USDC', binance:'BTCUSDC', coinbase:'BTC-USDC'},
-  {key:'ETH/USDC', binance:'ETHUSDC', coinbase:'ETH-USDC'},
+  {key:'SOL/USDT', venues:['binance','coinbase','kraken','okx','bybit','jupiter'],
+   sym:{binance:'SOLUSDT',coinbase:'SOL-USDT',kraken:'SOLUSDT',okx:'SOL-USDT',bybit:'SOLUSDT'}, jup:{in:'SOL',out:'USDT'}},
+  {key:'BTC/USDT', venues:['binance','coinbase','kraken','okx','bybit'],
+   sym:{binance:'BTCUSDT',coinbase:'BTC-USDT',kraken:'XBTUSDT',okx:'BTC-USDT',bybit:'BTCUSDT'}},
+  {key:'ETH/USDT', venues:['binance','coinbase','kraken','okx','bybit'],
+   sym:{binance:'ETHUSDT',coinbase:'ETH-USDT',kraken:'ETHUSDT',okx:'ETH-USDT',bybit:'ETHUSDT'}},
 ];
-const FEE = {binance:10, coinbase:40, jupiter:0};
+const FEES_STD = {binance:10,coinbase:40,kraken:26,okx:10,bybit:10,jupiter:0};
+const FEES_VIP = {binance:1,coinbase:2,kraken:4,okx:1,bybit:1,jupiter:0};
 const GAS = {jupiter:1};
 const SLIP = {
-  jupiter:{kLin:0,kSqrt:0,refNotional:1},
-  binance:{kLin:.5,kSqrt:3,refNotional:1e4},
-  coinbase:{kLin:.8,kSqrt:4,refNotional:1e4},
+  binance:{kLin:.5,kSqrt:3,refN:1e4}, coinbase:{kLin:.8,kSqrt:4,refN:1e4},
+  kraken:{kLin:.7,kSqrt:4,refN:1e4}, okx:{kLin:.5,kSqrt:3,refN:1e4},
+  bybit:{kLin:.5,kSqrt:3,refN:1e4}, jupiter:{kLin:0,kSqrt:0,refN:1},
 };
-const JUP_PROBE_SOL = 5; // reference size for the executable Jupiter quote
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
-// ---- slippage (mirror of models/slippage.ts) ----
-function paramBps(p,n){const q=n/p.refNotional;return p.kLin*q+p.kSqrt*Math.sqrt(q);}
+// ---- slippage + detector (mirror of models/slippage.ts + models/arbitrage.ts) ----
+function paramBps(p,n){const q=n/p.refN;return p.kLin*q+p.kSqrt*Math.sqrt(q);}
 function walkBps(q,side,n){
   const lv=side==='buy'?q.book.asks:q.book.bids, top=side==='buy'?q.ask:q.bid;
   let rem=n,base=0,spent=0;
@@ -111,10 +122,9 @@ function walkBps(q,side,n){
 function slipBps(q,side,n){
   if(q.executable)return 0; if(n<=0)return 0;
   if(q.book&&(side==='buy'?q.book.asks.length:q.book.bids.length))return walkBps(q,side,n);
-  return paramBps(SLIP[q.venue]||{kLin:1,kSqrt:5,refNotional:1e4},n);
+  return paramBps(SLIP[q.venue],n);
 }
-// ---- detector (mirror of models/arbitrage.ts) ----
-function detect(quotes,notional,minEdge){
+function detect(quotes,notional,minEdge,fees){
   const byPair={};
   for(const q of quotes)(byPair[q.pairKey]=byPair[q.pairKey]||[]).push(q);
   const out=[];
@@ -124,136 +134,124 @@ function detect(quotes,notional,minEdge){
     for(const b of fresh)for(const s of fresh){
       if(b.venue===s.venue)continue;
       const gross=(s.bid-b.ask)/b.ask*1e4;
-      const fee=b.feeBps+s.feeBps;
+      const fee=(fees[b.venue]||0)+(fees[s.venue]||0);
       const slip=slipBps(b,'buy',notional)+slipBps(s,'sell',notional);
       const gas=(GAS[b.venue]||0)+(GAS[s.venue]||0);
       const net=gross-fee-slip-gas;
-      if(net>=minEdge&&(!best||net>best.netBps))
-        best={pairKey:key,buy:b.venue,sell:s.venue,gross,fee,slip,gas,netBps:net};
+      if(!best||net>best.netBps) best={pairKey:key,buy:b.venue,sell:s.venue,netBps:net};
     }
-    if(best)out.push(best);
+    if(best)out.push({...best,actionable:best.netBps>=minEdge});
   }
   out.sort((a,b)=>a.pairKey<b.pairKey?-1:a.pairKey>b.pairKey?1:0);
   return out;
 }
 
-// ---- live fetchers (public endpoints, CORS-enabled) ----
-async function fetchBinance(symbol,pairKey){
-  const r=await fetch(`https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`);
-  if(!r.ok)throw new Error('HTTP '+r.status);
-  const d=await r.json();
-  const bids=d.bids.map(x=>({px:+x[0],sz:+x[1]})), asks=d.asks.map(x=>({px:+x[0],sz:+x[1]}));
-  return mkQuote('binance',pairKey,bids[0].px,asks[0].px,{bids,asks},false);
-}
-async function fetchCoinbase(product,pairKey){
-  const r=await fetch(`https://api.exchange.coinbase.com/products/${product}/book?level=2`);
-  if(!r.ok)throw new Error('HTTP '+r.status);
-  const d=await r.json();
-  const bids=(d.bids||[]).map(x=>({px:+x[0],sz:+x[1]})), asks=(d.asks||[]).map(x=>({px:+x[0],sz:+x[1]}));
-  if(!bids.length||!asks.length)throw new Error('empty book');
-  return mkQuote('coinbase',pairKey,bids[0].px,asks[0].px,{bids,asks},false);
-}
-async function fetchJupiter(cfg,pairKey){
-  const i=MINTS[cfg.in], o=MINTS[cfg.out];
-  const amount=Math.round(JUP_PROBE_SOL*10**i.dec);
-  const u=`https://quote-api.jup.ag/v6/quote?inputMint=${i.mint}&outputMint=${o.mint}&amount=${amount}&slippageBps=50&swapMode=ExactIn`;
-  const r=await fetch(u); if(!r.ok)throw new Error('HTTP '+r.status);
-  const d=await r.json();
-  const out=(+d.outAmount)/10**o.dec, inn=(+d.inAmount)/10**i.dec, px=out/inn;
-  return mkQuote('jupiter',pairKey,px,px,null,true); // executable: impact embedded
-}
-function mkQuote(venue,pairKey,bid,ask,book,executable){
-  return {venue,pairKey,bid,ask,mid:(bid+ask)/2,feeBps:FEE[venue],book,executable};
-}
+// ---- normalized quote builders ----
+function mk(venue,pairKey,bid,ask,book){return {venue,pairKey,bid,ask,mid:(bid+ask)/2,book,executable:false};}
+function mkExec(venue,pairKey,px){return {venue,pairKey,bid:px,ask:px,mid:px,book:null,executable:true};}
 
-// ---- paper ledger (persists across refreshes) ----
+// ---- per-venue fetchers (public, CORS) ----
+async function fBinance(p){const r=await fetch(`https://api.binance.com/api/v3/depth?symbol=${p.sym.binance}&limit=20`);if(!r.ok)throw 0;const d=await r.json();const b=d.bids.map(x=>({px:+x[0],sz:+x[1]})),a=d.asks.map(x=>({px:+x[0],sz:+x[1]}));return mk('binance',p.key,b[0].px,a[0].px,{bids:b,asks:a});}
+async function fCoinbase(p,tries){tries=tries||0;const r=await fetch(`https://api.exchange.coinbase.com/products/${p.sym.coinbase}/book?level=1`);if(r.status===429&&tries<1){await sleep(400);return fCoinbase(p,tries+1);}if(!r.ok)throw 0;const d=await r.json();const b=d.bids&&d.bids[0],a=d.asks&&d.asks[0];if(!b||!a)throw 0;return mk('coinbase',p.key,+b[0],+a[0],{bids:[{px:+b[0],sz:+b[1]}],asks:[{px:+a[0],sz:+a[1]}]});}
+async function fKraken(p){const r=await fetch(`https://api.kraken.com/0/public/Depth?pair=${p.sym.kraken}&count=10`);if(!r.ok)throw 0;const d=await r.json();if(d.error&&d.error.length)throw 0;const k=Object.keys(d.result)[0];const ob=d.result[k];const b=ob.bids.map(x=>({px:+x[0],sz:+x[1]})),a=ob.asks.map(x=>({px:+x[0],sz:+x[1]}));return mk('kraken',p.key,b[0].px,a[0].px,{bids:b,asks:a});}
+async function fOkx(p){const r=await fetch(`https://www.okx.com/api/v5/market/books?instId=${p.sym.okx}&sz=20`);if(!r.ok)throw 0;const d=await r.json();const ob=d.data&&d.data[0];if(!ob)throw 0;const b=ob.bids.map(x=>({px:+x[0],sz:+x[1]})),a=ob.asks.map(x=>({px:+x[0],sz:+x[1]}));return mk('okx',p.key,b[0].px,a[0].px,{bids:b,asks:a});}
+async function fBybit(p){const r=await fetch(`https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${p.sym.bybit}&limit=25`);if(!r.ok)throw 0;const d=await r.json();const ob=d.result;if(!ob||!ob.b||!ob.a)throw 0;const b=ob.b.map(x=>({px:+x[0],sz:+x[1]})),a=ob.a.map(x=>({px:+x[0],sz:+x[1]}));return mk('bybit',p.key,b[0].px,a[0].px,{bids:b,asks:a});}
+async function fJupiter(p){const i=MINTS[p.jup.in],o=MINTS[p.jup.out];const amt=Math.round(5*10**i.dec);const r=await fetch(`https://lite-api.jup.ag/swap/v1/quote?inputMint=${i.mint}&outputMint=${o.mint}&amount=${amt}&slippageBps=50&swapMode=ExactIn`);if(!r.ok)throw 0;const d=await r.json();const out=(+d.outAmount)/10**o.dec,inn=(+d.inAmount)/10**i.dec;return mkExec('jupiter',p.key,out/inn);}
+const FETCH={binance:fBinance,kraken:fKraken,okx:fOkx,bybit:fBybit,jupiter:fJupiter};
+
+// ---- fee inputs (editable) ----
+function renderFeeInputs(){
+  document.getElementById('fees').innerHTML=VENUE_ORDER.map(v=>
+    `<div class="f"><label>Fee ${v} (bps)</label><input id="fee_${v}" class="fee" type="number" min="0" step="1" value="${FEES_STD[v]}"></div>`
+  ).join('');
+}
+function readFees(){const f={};for(const v of VENUE_ORDER)f[v]=Math.max(0,+document.getElementById('fee_'+v).value||0);return f;}
+function setFees(obj){for(const v of VENUE_ORDER)document.getElementById('fee_'+v).value=obj[v];refresh();}
+
+// ---- live state ----
 let paper={pnl:0,fills:0,refreshes:0,log:[]};
-const venueStatus={};
+const vstat={};
 
 async function refresh(){
   const notional=Math.max(1,+document.getElementById('notional').value||0);
-  const minEdge=Math.max(0,+document.getElementById('minedge').value||0);
+  const minEdge=+document.getElementById('minedge').value||0;
+  const fees=readFees();
+
+  for(const v of VENUE_ORDER)vstat[v]={ok:0,err:0};
   const jobs=[];
-  for(const p of PAIRS){
-    if(p.binance)jobs.push(tag('binance',fetchBinance(p.binance,p.key)));
-    if(p.coinbase)jobs.push(tag('coinbase',fetchCoinbase(p.coinbase,p.key)));
-    if(p.jup)jobs.push(tag('jupiter',fetchJupiter(p.jup,p.key)));
+  for(const p of PAIRS)for(const v of p.venues){
+    if(v==='coinbase')continue;
+    jobs.push(tag(v, FETCH[v](p)));
   }
   const settled=await Promise.allSettled(jobs);
+  const cb=[];
+  for(const p of PAIRS){
+    if(!p.venues.includes('coinbase'))continue;
+    try{cb.push({status:'fulfilled',value:{venue:'coinbase',q:await fCoinbase(p)}});}
+    catch(e){cb.push({status:'rejected',reason:{venue:'coinbase'}});}
+    await sleep(150);
+  }
+  const all=[...settled,...cb];
   const quotes=[];
-  for(const k in venueStatus)venueStatus[k]={ok:0,err:0};
-  for(const s of settled){
-    if(s.status==='fulfilled'){quotes.push(s.value.q);bump(s.value.venue,'ok');}
-    else{const v=s.reason&&s.reason.venue;if(v)bump(v,'err');}
+  for(const s of all){
+    if(s.status==='fulfilled'){quotes.push(s.value.q);vstat[s.value.venue].ok++;}
+    else if(s.reason&&s.reason.venue)vstat[s.reason.venue].err++;
   }
   paper.refreshes++;
   renderVenues();
-  // spreads
-  let srows='';
+
   const byPair={}; for(const q of quotes)(byPair[q.pairKey]=byPair[q.pairKey]||[]).push(q);
+  let srows='';
   for(const key in byPair)for(const q of byPair[key])
-    srows+=`<tr><td>${key}</td><td>${q.venue}</td><td>${fmt(q.bid)}</td><td>${fmt(q.ask)}</td></tr>`;
+    srows+=`<tr><td>${key}</td><td>${q.venue}${q.executable?' *':''}</td><td>${fmt(q.bid)}</td><td>${fmt(q.ask)}</td></tr>`;
   document.getElementById('spreads').innerHTML=srows||'<tr><td colspan="4" class="warn">sem quotes — ver aviso em baixo</td></tr>';
-  // opportunities
-  const opps=detect(quotes,notional,minEdge);
+
+  const opps=detect(quotes,notional,minEdge,fees);
   let orows='';
   for(const o of opps){
-    orows+=`<tr><td>${o.pairKey}</td><td>${o.buy}</td><td>${o.sell}</td><td class="${o.netBps>0?'pos':'neg'}">${o.netBps.toFixed(2)}</td></tr>`;
-    // paper-execute this tick
-    const pnl=notional*o.netBps/1e4;
-    paper.pnl+=pnl; paper.fills++;
-    paper.log.unshift({t:new Date().toLocaleTimeString(),pair:o.pairKey,route:o.buy+'→'+o.sell,net:o.netBps,pnl});
+    const cls=o.actionable?'pos':'mut';
+    const badge=o.actionable?'<span class="badge act">ACTIONABLE</span>':'<span class="badge near">near-miss</span>';
+    orows+=`<tr><td>${o.pairKey}</td><td>${o.buy}</td><td>${o.sell}</td><td class="${cls}">${o.netBps.toFixed(2)}</td><td>${badge}</td></tr>`;
+    if(o.actionable){
+      const pnl=notional*o.netBps/1e4;
+      paper.pnl+=pnl; paper.fills++;
+      paper.log.unshift({t:new Date().toLocaleTimeString(),pair:o.pairKey,route:o.buy+'→'+o.sell,net:o.netBps,pnl});
+    }
   }
   paper.log=paper.log.slice(0,20);
-  document.getElementById('opps').innerHTML=orows||`<tr><td colspan="4" style="color:#8b949e">nenhuma ≥ ${minEdge}bps neste tick</td></tr>`;
-  // pnl + log
+  document.getElementById('opps').innerHTML=orows||'<tr><td colspan="5" class="mut">sem pares com ≥2 venues vivos</td></tr>';
+
   document.getElementById('pnl').textContent='$'+paper.pnl.toFixed(2);
   document.getElementById('pnl').className='pnl '+(paper.pnl>=0?'pos':'neg');
   document.getElementById('pnlsub').textContent=`${paper.fills} fills · ${paper.refreshes} refreshes · montante $${notional.toLocaleString()}`;
   document.getElementById('log').innerHTML=paper.log.map(f=>
     `<tr><td>${f.t}</td><td>${f.pair}</td><td>${f.route}</td><td class="${f.net>0?'pos':'neg'}">${f.net.toFixed(2)}</td><td class="${f.pnl>0?'pos':'neg'}">$${f.pnl.toFixed(2)}</td></tr>`
-  ).join('')||'<tr><td colspan="5" style="color:#8b949e">—</td></tr>';
-  document.getElementById('metrics').innerHTML=
-    `quotes ${quotes.length} · pares ${Object.keys(byPair).length} · atualizado ${new Date().toLocaleTimeString()}`;
-  const anyOk=quotes.length>0;
-  if(!anyOk)showBlocked(); else document.getElementById('banner').innerHTML=baseBanner();
+  ).join('')||'<tr><td colspan="5" class="mut">—</td></tr>';
+  document.getElementById('metrics').innerHTML=`quotes ${quotes.length} · pares ${Object.keys(byPair).length} · ${new Date().toLocaleTimeString()}`;
+  if(!quotes.length)showBlocked(); else document.getElementById('banner').innerHTML=baseBanner();
 }
-function tag(venue,promise){return promise.then(q=>({venue,q})).catch(e=>{e.venue=venue;throw e;});}
-function bump(v,k){venueStatus[v]=venueStatus[v]||{ok:0,err:0};venueStatus[v][k]++;}
+
+function tag(venue,promise){return promise.then(q=>({venue,q})).catch(()=>{throw {venue};});}
 function renderVenues(){
-  const order=['binance','coinbase','jupiter'];
-  document.getElementById('venues').innerHTML=order.map(v=>{
-    const s=venueStatus[v]||{ok:0,err:0};
-    const cls=s.ok>0?'ok':(s.err>0?'err':'');
+  document.getElementById('venuesStatus').innerHTML=VENUE_ORDER.map(v=>{
+    const s=vstat[v]||{ok:0,err:0};const cls=s.ok>0?'ok':(s.err>0?'err':'');
     return `<span class="vchip ${cls}">${v} ${s.ok>0?'●':(s.err>0?'×':'·')} ${s.ok}/${s.ok+s.err}</span>`;
   }).join('');
 }
 function fmt(n){return n<0.01?n.toExponential(3):n.toLocaleString(undefined,{maximumFractionDigits:n<10?4:2});}
-function baseBanner(){return 'Live paper-trade. Cada refresh, oportunidades ≥ min edge são executadas em paper e somadas ao PnL. Net bps já desconta fees + slippage (book real walked). Mesma matemática de models/slippage.ts + models/arbitrage.ts.';}
-function showBlocked(){
-  document.getElementById('banner').innerHTML='<span class="warn">⚠ Nenhuma venue respondeu.</span> O visualizador pode estar a bloquear pedidos de rede (CSP). '+
-   'Solução: descarrega este HTML e abre-o no Safari/Chrome do telemóvel — aí o fetch às exchanges funciona. As APIs (Binance/Coinbase/Jupiter) permitem CORS; o bloqueio, a existir, é da sandbox de pré-visualização.';
-}
+function baseBanner(){return 'Multi-CEX live paper-trade · 5 CEX + Jupiter (SOL) · quote USDT · net bps já desconta fees+slippage (book real walked) · sem assinatura nem ordens. Mais venues = mais hipótese de uma estar fora de linha. Em majors o edge é ~0; usa VIP/Maker e observa as deslocações transitórias.';}
+function showBlocked(){document.getElementById('banner').innerHTML='<span class="warn">⚠ Nenhuma venue respondeu.</span> Se isto acontecer no browser do telemóvel (não no painel do Claude), pode ser CORS/geo de uma exchange — as outras deviam responder. Recarrega; algumas APIs (ex.: OKX/Kraken) podem variar por região.';}
 
-// ---- controls ----
 let timer=null;
-function setRunning(on){
-  const dot=document.getElementById('dot'), btn=document.getElementById('toggle');
-  if(on){dot.classList.add('on');btn.textContent='⏸ Stop';}
-  else{dot.classList.remove('on');btn.textContent='▶ Start';}
-}
-document.getElementById('toggle').onclick=()=>{
-  if(timer){clearInterval(timer);timer=null;setRunning(false);return;}
-  setRunning(true); refresh();
-  const iv=Math.max(3,+document.getElementById('interval').value||8)*1000;
-  timer=setInterval(refresh,iv);
-};
+function setRunning(on){const d=document.getElementById('dot'),b=document.getElementById('toggle');if(on){d.classList.add('on');b.textContent='⏸ Stop';}else{d.classList.remove('on');b.textContent='▶ Start';}}
+document.getElementById('toggle').onclick=()=>{if(timer){clearInterval(timer);timer=null;setRunning(false);return;}setRunning(true);refresh();const iv=Math.max(3,+document.getElementById('interval').value||8)*1000;timer=setInterval(refresh,iv);};
 document.getElementById('once').onclick=refresh;
 document.getElementById('reset').onclick=()=>{paper={pnl:0,fills:0,refreshes:0,log:[]};refresh();};
-document.getElementById('interval').onchange=()=>{if(timer){clearInterval(timer);document.getElementById('toggle').click();document.getElementById('toggle').click();}};
+document.getElementById('std').onclick=()=>setFees(FEES_STD);
+document.getElementById('vip').onclick=()=>setFees(FEES_VIP);
 
-document.getElementById('banner').innerHTML=baseBanner()+' <br>Carrega ▶ Start para começar (ou ↻ Agora para um tick único).';
-// kick one immediate fetch so you see data without waiting
+renderFeeInputs();
+document.getElementById('banner').innerHTML=baseBanner()+' <br>Carrega ▶ Start (ou ↻ Agora).';
 refresh();
 </script>
 </body>
