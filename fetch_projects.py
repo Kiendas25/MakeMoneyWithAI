@@ -52,6 +52,25 @@ def format_stars(stars):
     else:
         return str(stars)  # No formatting for less than 1000
 
+
+# Star tiers used to break the flat ranking into navigable sections.
+# Each entry is (minimum_stars, section_title); ordered from highest to lowest.
+STAR_TIERS = [
+    (100_000, "🏆 100k+ Stars"),
+    (50_000, "🔥 50k – 100k Stars"),
+    (25_000, "⭐ 25k – 50k Stars"),
+    (10_000, "🌱 10k – 25k Stars"),
+    (0, "🧪 Under 10k Stars"),
+]
+
+
+def get_star_tier(stars):
+    """Return the section title for a given star count."""
+    for minimum, title in STAR_TIERS:
+        if stars >= minimum:
+            return title
+    return STAR_TIERS[-1][1]
+
 def load_excluded():
     """
     Load excluded repositories from excluded-repos.txt.
@@ -206,17 +225,27 @@ def convert_csv_to_readme():
         repos_list.append(repo_data)
 
     repos_list.sort(key=lambda x: x['stars'], reverse=True)
-    
+
+    last_updated = datetime.now().strftime("%Y-%m-%d")
+
     # Save to markdown file
     with open(OUTPUT_FILE, "w") as file:
         file.write("# Make Money With AI\n\n")
         file.write("**Make Money With AI** is a curated list of AI tools and projects that help you turn open-source into income.\n\n")
-        
+        file.write(f"> 📊 **{len(repos_list)} projects** · 🗓️ Last updated **{last_updated}** · ranked by GitHub stars (☆)\n\n")
+        file.write("Each entry links to the project and includes a one-line take on how its capabilities can be turned into revenue.\n\n")
+
+        current_tier = None
         for index, repo_data in enumerate(repos_list, start=1):
+            tier = get_star_tier(repo_data['stars'])
+            if tier != current_tier:
+                file.write(f"\n## {tier}\n\n")
+                current_tier = tier
+
             stars = format_stars(repo_data['stars'])
             business_model = repo_data.get('business_model', '')
             file.write(f"{index}. **[{repo_data['name']}]({repo_data['url']})** | ☆{stars} | {business_model}\n")
-    
+
     print(f"Converted {len(repos_list)} repositories from CSV to README.md")
 
 def save_repos_to_csv(repos_dict):
