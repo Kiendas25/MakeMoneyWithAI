@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Quantum-Carry — funding & basis scanner</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0d1117;color:#e6edf3;padding:14px}
+.head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:17px;margin:0}.tag{font-size:11px;color:#8b949e}
+.dot{width:10px;height:10px;border-radius:50%;margin-left:auto;background:#c0392b;transition:background .3s}.dot.on{background:#21c074}
+.card{margin:12px 0;padding:12px;background:#161b22;border:1px solid #30363d;border-radius:10px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+label{font-size:12px;color:#8b949e}
+input{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:8px 9px;font-family:inherit;font-size:16px;width:120px}
+input.sm{width:70px}
+button{background:#21c074;color:#04210f;border:none;border-radius:6px;padding:8px 12px;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px}
+button.alt{background:#30363d;color:#e6edf3}
+.venues{display:flex;gap:6px;flex-wrap:wrap;font-size:11px}
+.vchip{padding:3px 8px;border-radius:20px;border:1px solid #30363d;color:#8b949e}
+.vchip.ok{border-color:#21c074;color:#21c074}.vchip.err{border-color:#c0392b;color:#c0392b}
+.metrics{font-size:11px;color:#8b949e;margin:8px 0;line-height:1.6}
+.ptitle{font-size:12px;color:#8b949e;margin-bottom:9px;text-transform:uppercase;letter-spacing:.5px}
+.hint{font-size:11px;color:#8b949e;margin-bottom:8px;line-height:1.5}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;color:#8b949e;border-bottom:1px solid #30363d;padding:5px 5px;font-weight:600}
+td{padding:5px 5px;border-bottom:1px solid #21262d}
+.pos{color:#21c074;font-weight:700}.neg{color:#c0392b}.mut{color:#8b949e}
+.big{font-size:30px;font-weight:800}.sub{font-size:12px;color:#8b949e;margin-top:3px}
+.best{background:#132a1e}
+.banner{font-size:11px;color:#8b949e;margin-top:14px;border-top:1px solid #21262d;padding-top:9px;line-height:1.5}
+.warn{color:#e3b341}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Quantum-Carry · LIVE</h1>
+  <span class="tag">funding &amp; basis — paper, sem execução real</span>
+  <span class="dot" id="dot"></span>
+</div>
+
+<div class="card">
+  <div class="row">
+    <div><label>Capital (USD)</label><br><input id="capital" type="number" min="1" step="100" inputmode="decimal" value="10000"></div>
+    <div><label>Refresh (s)</label><br><input id="interval" class="sm" type="number" min="10" step="5" value="30"></div>
+    <button id="toggle">▶ Start</button>
+    <button id="once" class="alt">↻ Agora</button>
+    <button id="reset" class="alt">Reset</button>
+  </div>
+  <div class="hint">Cash-and-carry: <b>short do perp com funding positivo + long do spot</b> = delta-neutral, recebes o funding. Edge lento (a cada 8h) → captável por retail. Não é grátis: ver avisos.</div>
+</div>
+
+<div class="card"><div class="ptitle">Venue status</div><div class="venues" id="venuesStatus"></div></div>
+<div class="metrics" id="metrics">à espera do primeiro refresh…</div>
+
+<div class="card"><div class="ptitle">Funding &amp; basis ao vivo</div>
+  <div class="hint">Funding = taxa por período de 8h. APR = anualizado (×3×365). Basis = (perp − spot)/spot. Verde = melhor carry desse ativo.</div>
+  <table><thead><tr><th>Ativo</th><th>Venue</th><th>Funding 8h</th><th>APR</th><th>Basis</th></tr></thead><tbody id="rows"></tbody></table></div>
+
+<div class="card"><div class="ptitle">Melhor carry por ativo (cash-and-carry)</div>
+  <table><thead><tr><th>Ativo</th><th>Estratégia</th><th>APR</th><th>$/dia*</th></tr></thead><tbody id="best"></tbody></table>
+  <div class="sub">*por ativo, com capital dividido igualmente. APR assume a taxa atual constante (não é).</div></div>
+
+<div class="card"><div class="ptitle">Funding acumulado (sim)</div>
+  <div class="big" id="acc">$0.00</div>
+  <div class="sub" id="accsub">desde o Start · projeção anual —</div></div>
+
+<div class="banner" id="banner"></div>
+
+<script>
+// ===== Funding & basis scanner (browser, public data, no auth, no signing). =====
+// Perps: Binance USD-M, Bybit linear, OKX swap. Spot ref: Binance spot.
+// Strategy: delta-neutral cash-and-carry (short perp + long spot) to harvest funding.
+// This is a SLOW structural edge (funding paid ~8h) so retail latency is fine — but
+// it carries real costs/risks (see banner). Paper only: no orders, no signing.
+
+const ASSETS=['SOL','BTC','ETH'];
+const VENUE_ORDER=['binance','bybit','okx'];
+const FUND_PER_YEAR=3*365; // 8h funding => 3x/day
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// ---- fetchers ----
+async function spotPrice(asset){ // Binance spot, USDT quote
+  const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${asset}USDT`);
+  if(!r.ok)throw 0; const d=await r.json(); return +d.price;
+}
+async function fBinance(asset){
+  const r=await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${asset}USDT`);
+  if(!r.ok)throw 0; const d=await r.json();
+  return {venue:'binance',asset,rate:+d.lastFundingRate,mark:+d.markPrice};
+}
+async function fBybit(asset){
+  const r=await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${asset}USDT`);
+  if(!r.ok)throw 0; const d=await r.json(); const t=d.result&&d.result.list&&d.result.list[0];
+  if(!t)throw 0; return {venue:'bybit',asset,rate:+t.fundingRate,mark:+t.markPrice};
+}
+async function fOkx(asset){
+  const inst=`${asset}-USDT-SWAP`;
+  const [rf,rm]=await Promise.all([
+    fetch(`https://www.okx.com/api/v5/public/funding-rate?instId=${inst}`),
+    fetch(`https://www.okx.com/api/v5/public/mark-price?instType=SWAP&instId=${inst}`),
+  ]);
+  if(!rf.ok)throw 0; const df=await rf.json(); const f=df.data&&df.data[0]; if(!f)throw 0;
+  let mark=NaN; try{const dm=await rm.json(); mark=+(dm.data&&dm.data[0]&&dm.data[0].markPx);}catch(e){}
+  return {venue:'okx',asset,rate:+f.fundingRate,mark};
+}
+const FETCH={binance:fBinance,bybit:fBybit,okx:fOkx};
+
+// ---- state ----
+let acc={usd:0,since:0,lastTs:0};
+const vstat={};
+
+async function refresh(){
+  const capital=Math.max(1,+document.getElementById('capital').value||0);
+  for(const v of VENUE_ORDER)vstat[v]={ok:0,err:0};
+
+  // spot prices (for basis) in parallel
+  const spots={};
+  await Promise.all(ASSETS.map(async a=>{try{spots[a]=await spotPrice(a);}catch(e){spots[a]=NaN;}}));
+
+  // funding per venue/asset
+  const jobs=[];
+  for(const a of ASSETS)for(const v of VENUE_ORDER)jobs.push(tag(v,FETCH[v](a)));
+  const settled=await Promise.allSettled(jobs);
+  const data=[];
+  for(const s of settled){
+    if(s.status==='fulfilled'){data.push(s.value.d);vstat[s.value.venue].ok++;}
+    else if(s.reason&&s.reason.venue)vstat[s.reason.venue].err++;
+  }
+  renderVenues();
+
+  // rows + best per asset
+  const bestByAsset={};
+  for(const d of data){
+    d.apr=d.rate*FUND_PER_YEAR*100;
+    const sp=spots[d.asset];
+    d.basis=(Number.isFinite(d.mark)&&Number.isFinite(sp))?(d.mark-sp)/sp*100:NaN;
+    if(!bestByAsset[d.asset]||d.apr>bestByAsset[d.asset].apr)bestByAsset[d.asset]=d;
+  }
+  data.sort((a,b)=> a.asset<b.asset?-1:a.asset>b.asset?1:(b.apr-a.apr));
+  document.getElementById('rows').innerHTML=data.map(d=>{
+    const isBest=bestByAsset[d.asset]===d;
+    return `<tr class="${isBest?'best':''}"><td>${d.asset}</td><td>${d.venue}</td>`+
+      `<td class="${d.rate>=0?'pos':'neg'}">${(d.rate*100).toFixed(4)}%</td>`+
+      `<td class="${d.apr>=0?'pos':'neg'}">${d.apr.toFixed(1)}%</td>`+
+      `<td class="mut">${Number.isFinite(d.basis)?d.basis.toFixed(3)+'%':'—'}</td></tr>`;
+  }).join('')||'<tr><td colspan="5" class="warn">sem dados — ver aviso</td></tr>';
+
+  // best carry table
+  const assetsWithData=Object.keys(bestByAsset);
+  const perAsset=assetsWithData.length?capital/assetsWithData.length:0;
+  document.getElementById('best').innerHTML=assetsWithData.sort().map(a=>{
+    const d=bestByAsset[a];
+    const dir=d.apr>=0?`short ${d.venue} perp + long spot`:`long ${d.venue} perp + short spot`;
+    const daily=perAsset*Math.abs(d.apr)/100/365;
+    return `<tr><td>${a}</td><td>${dir}</td><td class="${d.apr>=0?'pos':'neg'}">${d.apr.toFixed(1)}%</td><td class="pos">$${daily.toFixed(2)}</td></tr>`;
+  }).join('')||'<tr><td colspan="4" class="mut">—</td></tr>';
+
+  // simulated accrual: sum over assets of perAsset * |apr| earned over elapsed dt
+  const now=Date.now();
+  if(!acc.since)acc.since=now;
+  if(acc.lastTs){
+    const dt=(now-acc.lastTs)/1000; // seconds
+    let ratePerSec=0;
+    for(const a of assetsWithData){ratePerSec+=perAsset*(Math.abs(bestByAsset[a].apr)/100)/ (365*24*3600);}
+    acc.usd+=ratePerSec*dt;
+  }
+  acc.lastTs=now;
+  const totalApr=assetsWithData.reduce((s,a)=>s+Math.abs(bestByAsset[a].apr),0)/(assetsWithData.length||1);
+  const annual=capital*totalApr/100;
+  document.getElementById('acc').textContent='$'+acc.usd.toFixed(4);
+  document.getElementById('acc').className='big pos';
+  const mins=((now-acc.since)/60000).toFixed(1);
+  document.getElementById('accsub').textContent=`${mins} min a acumular · APR médio ${totalApr.toFixed(1)}% · projeção anual ~$${annual.toFixed(0)} sobre $${capital.toLocaleString()}`;
+
+  document.getElementById('metrics').textContent=`pontos ${data.length} · ativos ${assetsWithData.length} · ${new Date().toLocaleTimeString()}`;
+  document.getElementById('banner').innerHTML=baseBanner();
+  if(!data.length)showBlocked();
+}
+
+function tag(venue,promise){return promise.then(d=>({venue,d})).catch(()=>{throw {venue};});}
+function renderVenues(){
+  document.getElementById('venuesStatus').innerHTML=VENUE_ORDER.map(v=>{
+    const s=vstat[v]||{ok:0,err:0};const cls=s.ok>0?'ok':(s.err>0?'err':'');
+    return `<span class="vchip ${cls}">${v} ${s.ok>0?'●':(s.err>0?'×':'·')} ${s.ok}/${s.ok+s.err}</span>`;
+  }).join('');
+}
+function baseBanner(){return '<b>Avisos honestos:</b> (1) funding pode <b>inverter</b> a qualquer 8h — o APR anualizado assume a taxa atual constante, o que é falso. (2) Precisas de <b>margem + spot</b> nas duas pernas; fees de entrada/saída comem semanas de funding se rodares muito. (3) O short do perp tem <b>risco de liquidação</b> se a margem não for gerida. (4) Basis risk entre spot e perp. É um edge REAL e captável por retail (lento), mas NÃO é dinheiro grátis. Paper only.';}
+function showBlocked(){document.getElementById('banner').innerHTML='<span class="warn">⚠ Sem dados.</span> No browser do telemóvel deviam responder; algumas APIs (fapi.binance/OKX) podem variar por região/CORS. Recarrega.';}
+
+let timer=null;
+function setRunning(on){const d=document.getElementById('dot'),b=document.getElementById('toggle');if(on){d.classList.add('on');b.textContent='⏸ Stop';}else{d.classList.remove('on');b.textContent='▶ Start';}}
+document.getElementById('toggle').onclick=()=>{if(timer){clearInterval(timer);timer=null;setRunning(false);return;}setRunning(true);refresh();const iv=Math.max(10,+document.getElementById('interval').value||30)*1000;timer=setInterval(refresh,iv);};
+document.getElementById('once').onclick=refresh;
+document.getElementById('reset').onclick=()=>{acc={usd:0,since:0,lastTs:0};refresh();};
+
+document.getElementById('banner').innerHTML=baseBanner()+' <br>Carrega ▶ Start.';
+refresh();
+</script>
+</body>
+</html>

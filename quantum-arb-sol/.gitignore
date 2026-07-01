@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+coverage/
+quantum-arb-preview.html
+quantum-arb-snapshot.html
+preview-gen.mts
