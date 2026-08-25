@@ -3,3 +3,10 @@
 venv/
 .DS_Store
 *.iml
+node_modules/
+
+# Flick: keep the authored sources, drop everything regenerable.
+flick-output*/scenes/
+flick-output*/*.mp4
+flick-output*/concat.txt
+flick-output*/remotion/public/sounds/

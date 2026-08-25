@@ -1,0 +1,4 @@
+interface:
+  display_name: "Flick"
+  short_description: "Turn source material into motion animation"
+  default_prompt: "Use $flick to turn this video, transcript, or script into a motion animation."
