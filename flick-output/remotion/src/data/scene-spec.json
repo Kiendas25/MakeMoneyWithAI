@@ -1,0 +1,173 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "style": {
+    "ink": "#0d0b14",
+    "paper": "#f4efe4",
+    "pink": "#ff2e63",
+    "cyan": "#22d3ee",
+    "gold": "#ffc53d",
+    "display": "Anton",
+    "label": "Archivo Black",
+    "mono": "DejaVu Sans Mono"
+  },
+  "scenes": [
+    {
+      "id": "promise-flash",
+      "name": "promise-flash",
+      "from": 0,
+      "durationInFrames": 120,
+      "transcript": "Everyone tells you AI will make you rich.",
+      "start": 0,
+      "end": 4,
+      "component": "PromiseFlash",
+      "background": "#0d0b14",
+      "accent": "#ffc53d",
+      "soundEffects": [
+        {
+          "src": "Impact.mp3",
+          "atFrame": 18
+        }
+      ]
+    },
+    {
+      "id": "empty-toolbox",
+      "name": "empty-toolbox",
+      "from": 120,
+      "durationInFrames": 135,
+      "transcript": "Nobody tells you which tools actually do it.",
+      "start": 4,
+      "end": 8.5,
+      "component": "EmptyToolbox",
+      "background": "#0d0b14",
+      "accent": "#ff2e63",
+      "soundEffects": [
+        {
+          "src": "Suspense.mp3",
+          "atFrame": 6
+        },
+        {
+          "src": "transitions.mp3",
+          "atFrame": 100
+        }
+      ]
+    },
+    {
+      "id": "star-ranked-scroll",
+      "name": "star-ranked-scroll",
+      "from": 255,
+      "durationInFrames": 165,
+      "transcript": "Five hundred open-source AI projects. Ranked by stars.",
+      "start": 8.5,
+      "end": 14,
+      "component": "StarRankedScroll",
+      "background": "#f4efe4",
+      "accent": "#ffc53d",
+      "soundEffects": [
+        {
+          "src": "Pop.mp3",
+          "atFrame": 10
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 30
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 51
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 71
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 91
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 112
+        },
+        {
+          "src": "Correct.mp3",
+          "atFrame": 132
+        }
+      ]
+    },
+    {
+      "id": "rapid-fire-cards",
+      "name": "rapid-fire-cards",
+      "from": 420,
+      "durationInFrames": 165,
+      "transcript": "AutoGPT. Ollama. LangChain. n8n. ComfyUI.",
+      "start": 14,
+      "end": 19.5,
+      "component": "RapidFireCards",
+      "background": "#0d0b14",
+      "accent": "#22d3ee",
+      "soundEffects": [
+        {
+          "src": "Pop.mp3",
+          "atFrame": 0
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 33
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 66
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 99
+        },
+        {
+          "src": "Pop.mp3",
+          "atFrame": 132
+        }
+      ]
+    },
+    {
+      "id": "monetize-annotation",
+      "name": "monetize-annotation",
+      "from": 585,
+      "durationInFrames": 150,
+      "transcript": "Every single one, with how people actually monetize it.",
+      "start": 19.5,
+      "end": 24.5,
+      "component": "MonetizeAnnotation",
+      "background": "#f4efe4",
+      "accent": "#ff2e63",
+      "soundEffects": [
+        {
+          "src": "Typing.mp3",
+          "atFrame": 30
+        }
+      ]
+    },
+    {
+      "id": "pick-one-ship-it",
+      "name": "pick-one-ship-it",
+      "from": 735,
+      "durationInFrames": 150,
+      "transcript": "Star it. Pick one. Ship it.",
+      "start": 24.5,
+      "end": 29.5,
+      "component": "PickOneShipIt",
+      "background": "#0d0b14",
+      "accent": "#ffc53d",
+      "soundEffects": [
+        {
+          "src": "aha-moment.MP3",
+          "atFrame": 12
+        },
+        {
+          "src": "energy.MP3",
+          "atFrame": 110
+        }
+      ]
+    }
+  ]
+}

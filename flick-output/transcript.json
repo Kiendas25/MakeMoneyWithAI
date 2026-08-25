@@ -1,0 +1,44 @@
+{
+  "source": "pasted-transcript",
+  "text": "Everyone tells you AI will make you rich.\nNobody tells you which tools actually do it.\nFive hundred open-source AI projects. Ranked by stars.\nAutoGPT. Ollama. LangChain. n8n. ComfyUI.\nEvery single one, with how people actually monetize it.\nStar it. Pick one. Ship it.",
+  "segments": [
+    {
+      "id": 1,
+      "start": 0,
+      "end": 4,
+      "text": "Everyone tells you AI will make you rich."
+    },
+    {
+      "id": 2,
+      "start": 4,
+      "end": 8.5,
+      "text": "Nobody tells you which tools actually do it."
+    },
+    {
+      "id": 3,
+      "start": 8.5,
+      "end": 14,
+      "text": "Five hundred open-source AI projects. Ranked by stars."
+    },
+    {
+      "id": 4,
+      "start": 14,
+      "end": 19.5,
+      "text": "AutoGPT. Ollama. LangChain. n8n. ComfyUI."
+    },
+    {
+      "id": 5,
+      "start": 19.5,
+      "end": 24.5,
+      "text": "Every single one, with how people actually monetize it."
+    },
+    {
+      "id": 6,
+      "start": 24.5,
+      "end": 29.5,
+      "text": "Star it. Pick one. Ship it."
+    }
+  ],
+  "words": [],
+  "duration": 29.5
+}
