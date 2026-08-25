@@ -3,3 +3,5 @@
 venv/
 .DS_Store
 *.iml
+flick-output*/
+node_modules/
