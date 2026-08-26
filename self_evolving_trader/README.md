@@ -188,6 +188,7 @@ Other properties that matter for running unattended:
 ```bash
 python3 -m crypto_agent demo --steps 400 --fresh   # offline end-to-end run
 python3 -m crypto_agent run --steps 100            # autonomous loop
+python3 -m crypto_agent dashboard --serve --open   # visual dashboard in a browser
 python3 -m crypto_agent backtest                   # champion, in- vs out-of-sample
 python3 -m crypto_agent evolve -g 5                # run generations now
 python3 -m crypto_agent status                     # full state as JSON
@@ -195,6 +196,25 @@ python3 -m crypto_agent memory -q "downtrend high vol long"
 python3 -m crypto_agent report                     # trades, evolution, events
 python3 -m crypto_agent resume-risk                # clear a drawdown halt
 ```
+
+The read-only commands (`status`, `report`, `memory`, `backtest`, `dashboard`)
+adopt the config the agent last booted with, read from Brain 1 — so
+`status` describes the agent that is actually running rather than falling back
+to defaults. Explicit flags and `CRYPTO_AGENT_*` variables still override it,
+and a stored `live` mode is never adopted by an inspection command.
+
+## Dashboard
+
+```bash
+python3 -m crypto_agent dashboard --serve --open        # live, re-renders per request
+python3 -m crypto_agent dashboard -o report.html        # or write a single file
+```
+
+Equity curve, price candles with entry/exit markers, best-vs-mean fitness per
+generation, the champion's genes, Brain 2's lessons, the trade blotter, recent
+decisions and the event log — one self-contained HTML file with inline SVG
+charts. No JavaScript, no CDN, no dependencies, and it reads the brains without
+touching the exchange, so it is safe to run while the agent trades.
 
 Global flags: `--config`, `--data-dir`, `--symbol`, `--timeframe`, `--provider`,
 `--exchange`, `--mode`, `--seed`, `--log-level`.
