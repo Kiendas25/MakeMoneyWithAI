@@ -256,3 +256,43 @@ class TestAgentEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProcessLiveness(unittest.TestCase):
+    """The lockfile's liveness probe must never be able to kill anything."""
+
+    def test_current_process_is_alive(self):
+        import os as _os
+
+        from crypto_agent.agent import _pid_alive
+
+        self.assertTrue(_pid_alive(_os.getpid()))
+
+    def test_absent_and_invalid_pids_are_dead(self):
+        from crypto_agent.agent import _pid_alive
+
+        self.assertFalse(_pid_alive(0))
+        self.assertFalse(_pid_alive(-1))
+
+    def test_a_reaped_child_is_reported_dead(self):
+        import subprocess
+        import sys
+
+        from crypto_agent.agent import _pid_alive
+
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        self.assertFalse(_pid_alive(proc.pid))
+
+    def test_windows_probe_never_calls_os_kill(self):
+        """os.kill on Windows terminates; the probe must not go near it."""
+        import os as _os
+        import unittest.mock as mock
+
+        from crypto_agent import agent as agent_module
+
+        with mock.patch.object(_os, "name", "nt"), \
+             mock.patch.object(_os, "kill", side_effect=AssertionError("os.kill must not be called on Windows")), \
+             mock.patch.object(agent_module, "_pid_alive_windows", return_value=True) as probe:
+            self.assertTrue(agent_module._pid_alive(4242))
+        probe.assert_called_once_with(4242)

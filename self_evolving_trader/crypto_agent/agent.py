@@ -431,8 +431,41 @@ def _release_lock(path) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
+    """Is this PID still running?
+
+    ``os.kill(pid, 0)`` is the POSIX idiom, but on Windows ``os.kill`` calls
+    TerminateProcess for any signal other than the console-control ones - it
+    would kill whatever process now holds a stale PID from the lockfile rather
+    than merely asking about it. Windows gets an OpenProcess probe instead.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
-    except (OSError, ProcessLookupError):
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except OSError:
         return False
     return True
+
+
+def _pid_alive_windows(pid: int) -> bool:  # pragma: no cover - platform specific
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return True  # can't tell; assume alive rather than stomp a live agent
+        return exit_code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)

@@ -40,6 +40,21 @@ Then run it for real market data, still on paper money:
 python3 -m crypto_agent --provider binance --symbol BTC/USDT --timeframe 1h run
 ```
 
+On **Windows PowerShell**, use `python` and keep each command on one line (`\`
+is not a line continuation there — the backtick `` ` `` is):
+
+```powershell
+git clone -b claude/self-evolving-crypto-agent-a9r543 https://github.com/Kiendas25/MakeMoneyWithAI.git
+cd MakeMoneyWithAI\self_evolving_trader
+python -m pytest tests -q
+python -m crypto_agent --provider binance --symbol BTC/USDT --timeframe 5m --mode paper run --poll-seconds 20
+```
+
+If Binance answers `451`, the endpoint is geo-blocked where you are; switch
+venue with `pip install ccxt` and
+`--provider ccxt --exchange coinbase --symbol BTC/USD` (still paper — ccxt is
+only fetching candles there).
+
 It will fetch history, bootstrap a champion strategy, and trade a paper book
 every hour, evolving as it goes. `Ctrl-C` stops it cleanly; starting it again
 resumes mid-position from the two brains.
