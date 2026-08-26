@@ -231,3 +231,65 @@ class TestBackwardCompatibility(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCashIsNeverOverdrawn(unittest.TestCase):
+    """A spot book cannot spend money it does not have.
+
+    position_size() fits the order to available cash, but the memory size
+    multiplier and the equity-based notional cap both rescale after it — and
+    equity exceeds cash whenever another position is open. A real exchange
+    rejects such an order; on paper it silently books negative cash.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = Config(data_dir=self.tmp.name, start_cash=10_000.0,
+                          risk_per_trade=0.25, max_position_pct=1.0,
+                          min_notional=10.0, fee_bps=10.0)
+        self.brain = DualBrain(self.cfg)
+        self.risk = RiskManager(self.cfg, self.brain.b1)
+        self.signal = Signal(1, 0.5, "long", {}, "uptrend_low_vol")
+        self.ts = 1_700_000_000_000
+        self.risk.observe_equity(10_000, self.ts)
+
+    def tearDown(self):
+        self.brain.close()
+        self.tmp.cleanup()
+
+    def _cost(self, decision, price):
+        """What the broker will actually take out of cash: the slipped fill
+        price plus the fee charged on it."""
+        return (decision.qty * price
+                * (1.0 + self.cfg.slippage_bps / 10_000.0)
+                * (1.0 + self.cfg.fee_bps / 10_000.0))
+
+    def test_a_memory_upsize_cannot_outspend_the_cash_on_hand(self):
+        cash = 1_000.0  # the rest of equity is tied up in another position
+        decision = self.risk.check_entry(10_000, cash, 100.0, 95.0, self.signal, 1.0,
+                                         size_mult=1.5, now_ms=self.ts)
+        self.assertTrue(decision.approved)
+        self.assertLessEqual(self._cost(decision, 100.0), cash + 1e-9)
+
+    def test_the_notional_cap_cannot_outspend_the_cash_on_hand(self):
+        cash = 500.0
+        decision = self.risk.check_entry(10_000, cash, 100.0, 99.9, self.signal, 1.0,
+                                         now_ms=self.ts)
+        if decision.approved:
+            self.assertLessEqual(self._cost(decision, 100.0), cash + 1e-9)
+
+    def test_an_unaffordable_order_is_refused_rather_than_shrunk_to_dust(self):
+        decision = self.risk.check_entry(10_000, 5.0, 100.0, 95.0, self.signal, 1.0,
+                                         now_ms=self.ts)
+        self.assertFalse(decision.approved)
+        self.assertIn("minimum notional", decision.reason)
+
+    def test_shorts_are_not_clamped_by_cash(self):
+        """Selling short raises cash rather than spending it."""
+        cfg = Config(**{**self.cfg.to_dict(), "allow_short": True})
+        risk = RiskManager(cfg, self.brain.b1)
+        risk.observe_equity(10_000, self.ts)
+        short = Signal(-1, -0.5, "short", {}, "downtrend_high_vol")
+        decision = risk.check_entry(10_000, 1.0, 100.0, 105.0, short, 1.0, now_ms=self.ts)
+        self.assertTrue(decision.approved)
+        self.assertGreater(decision.qty, 0.0)

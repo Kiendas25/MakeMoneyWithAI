@@ -151,10 +151,29 @@ class RiskManager:
 
         qty = position_size(equity, price, stop, self.cfg, risk_scale, cash=cash if signal.direction > 0 else None)
         qty *= max(0.0, size_mult)
-        if qty * price < self.cfg.min_notional:
-            return RiskDecision(False, 0.0, "size below minimum notional")
         if qty * price > equity * self.cfg.max_position_pct * 1.0001:
             qty = equity * self.cfg.max_position_pct / price
+
+        if signal.direction > 0:
+            # position_size() already fitted the order to the cash on hand, but
+            # the memory multiplier and the notional cap above both rescale
+            # after it - and the notional cap is a fraction of *equity*, which
+            # exceeds cash whenever another position is open. Without this final
+            # clamp a 1.5x memory bias could spend money the account does not
+            # have; on a real exchange that is a rejected order, and on paper it
+            # silently books negative cash. The broker fills a buy at
+            # price * (1 + slippage) and charges the fee on that, so both have
+            # to come out of the same cash.
+            cost_per_unit = (
+                price
+                * (1.0 + self.cfg.slippage_bps / 10_000.0)
+                * (1.0 + self.cfg.fee_bps / 10_000.0)
+            )
+            affordable = max(0.0, cash) / cost_per_unit if cost_per_unit > 0 else 0.0
+            qty = min(qty, affordable)
+
+        if qty * price < self.cfg.min_notional:
+            return RiskDecision(False, 0.0, "size below minimum notional")
 
         if price_history:
             refusal = self._correlated_exposure_reason(
