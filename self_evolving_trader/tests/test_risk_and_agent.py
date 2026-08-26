@@ -215,14 +215,14 @@ class TestAgentEndToEnd(unittest.TestCase):
     def test_state_survives_a_restart_mid_run(self):
         self._replay(bars=120)
         steps = self.agent.brain.b1.get_state("agent.steps")
-        position = self.agent.brain.b1.load_position()
+        position = self.agent.brain.b1.load_position(self.cfg.symbol)
         trades = self.agent.brain.b1.trade_stats()["trades"]
         self.agent.close()
 
         self.agent = TradingAgent(self.cfg)
         self.assertEqual(self.agent.brain.b1.get_state("agent.steps"), steps)
         self.assertEqual(self.agent.brain.b1.trade_stats()["trades"], trades)
-        reloaded = self.agent.brain.b1.load_position()
+        reloaded = self.agent.brain.b1.load_position(self.cfg.symbol)
         if position is None:
             self.assertIsNone(reloaded)
         else:

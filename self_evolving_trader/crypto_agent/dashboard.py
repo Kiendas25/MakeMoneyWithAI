@@ -240,6 +240,26 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]], empty: str) ->
     return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
+def _market_charts(by_symbol, prices, trades) -> str:
+    """One price card per market, each showing only its own trades."""
+    if not by_symbol:
+        return ('<section class="card full"><h2>Price and trades</h2>'
+                f'{_empty_chart(Box(height=300.0), "waiting for candles")}</section>')
+    cards = []
+    for symbol, rows in by_symbol.items():
+        own = [t for t in trades if t.symbol == symbol]
+        last = prices.get(symbol, 0.0)
+        cards.append(
+            '<section class="card full">'
+            f"<h2>{html.escape(symbol)} &middot; {last:,.2f}</h2>"
+            f"{candle_chart(rows, own)}"
+            '<div class="legend"><span>&#9650; entry</span>'
+            "<span>&#9675; exit (green = win, red = loss)</span>"
+            f"<span>{len(own)} closed trade(s) in view</span></div></section>"
+        )
+    return "".join(cards)
+
+
 def _pct(value: float) -> str:
     tone = "pos" if value > 0 else "neg" if value < 0 else ""
     return f'<span class="{tone}">{value * 100:+.2f}%</span>'
@@ -252,15 +272,19 @@ def _ts(ms: int) -> str:
 def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
            candle_limit: int = 220) -> str:
     b1 = brain.b1
-    candles = b1.load_candles(cfg.symbol, cfg.timeframe, candle_limit)
-    price = candles[-1].close if candles else 0.0
+    universe = cfg.symbol_list
+    by_symbol = {
+        symbol: b1.load_candles(symbol, cfg.timeframe, candle_limit) for symbol in universe
+    }
+    by_symbol = {symbol: rows for symbol, rows in by_symbol.items() if rows}
+    prices = {symbol: rows[-1].close for symbol, rows in by_symbol.items()}
     equity_rows = b1.equity_curve(limit=1500)
     equity = [float(r["equity"]) for r in equity_rows]
     trades = b1.recent_trades(60)
     decisions = b1.recent_decisions(25)
     generations = b1.generation_history(60)
     champion = b1.champion()
-    position = b1.load_position()
+    positions = b1.load_positions()
     stats = b1.trade_stats()
     risk = b1.get_state("risk.state") or {}
     memories = brain.b2.latest(limit=25)
@@ -272,15 +296,18 @@ def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
     drawdown = (peak - current_equity) / peak if peak > 0 else 0.0
 
     halted = bool(risk.get("halted"))
+    cached = sum(len(rows) for rows in by_symbol.values())
     status_line = (
         f"HALTED - {risk.get('halt_reason', '')}" if halted
-        else f"{cfg.mode} mode - {cfg.provider} - {len(candles)} candles cached"
+        else f"{cfg.mode} mode - {cfg.provider} - {len(by_symbol)}/{len(universe)} markets, "
+             f"{cached} candles cached"
     )
 
     stats_html = "".join([
         _stat("Equity", f"{current_equity:,.2f}"),
         _stat("Return", f"{pnl_pct * 100:+.2f}%", "pos" if pnl_pct > 0 else "neg" if pnl_pct else ""),
-        _stat("Last price", f"{price:,.2f}" if price else "no data"),
+        _stat("Markets", f"{len(by_symbol)}/{len(universe)}"),
+        _stat("Open positions", f"{len(positions)}"),
         _stat("Drawdown", f"{drawdown * 100:.2f}%", "neg" if drawdown > 0.05 else ""),
         _stat("Closed trades", f"{stats['trades']:.0f}"),
         _stat("Win rate", f"{stats['win_rate'] * 100:.0f}%"),
@@ -290,14 +317,16 @@ def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
         _stat("Steps", f"{b1.get_state('agent.steps', 0)}"),
     ])
 
-    if position:
-        pos_html = (
-            f'<div class="position {"long" if position.qty > 0 else "short"}">'
-            f"<strong>{html.escape(position.side.upper())} {abs(position.qty):.6f} "
-            f"{html.escape(cfg.symbol)}</strong> from {position.entry_price:,.2f} "
-            f"&middot; now {_pct(position.unrealized_pct(price)) if price else '-'} "
-            f"&middot; stop {position.stop or 0:,.2f} &middot; target "
-            f"{position.take_profit or 0:,.2f} &middot; {position.bars_held} bars held</div>"
+    if positions:
+        pos_html = "".join(
+            f'<div class="position {"long" if p.qty > 0 else "short"}">'
+            f"<strong>{html.escape(p.side.upper())} {abs(p.qty):.6f} "
+            f"{html.escape(symbol)}</strong> from {p.entry_price:,.2f} "
+            f"&middot; now "
+            f"{_pct(p.unrealized_pct(prices[symbol])) if symbol in prices else '-'} "
+            f"&middot; stop {p.stop or 0:,.2f} &middot; target "
+            f"{p.take_profit or 0:,.2f} &middot; {p.bars_held} bars held</div>"
+            for symbol, p in sorted(positions.items())
         )
     else:
         pos_html = '<div class="position flat">No open position</div>'
@@ -354,10 +383,11 @@ def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
         if refresh_seconds > 0 else ""
     )
 
+    heading = universe[0] if len(universe) == 1 else f"{len(universe)} markets"
     return _TEMPLATE.substitute(
-        title=html.escape(f"{cfg.symbol} {cfg.timeframe} - trading agent"),
+        title=html.escape(f"{heading} {cfg.timeframe} - trading agent"),
         refresh=refresh_tag,
-        symbol=html.escape(cfg.symbol),
+        symbol=html.escape(", ".join(universe)),
         timeframe=html.escape(cfg.timeframe),
         status_class="halted" if halted else "live",
         status=html.escape(status_line),
@@ -365,7 +395,7 @@ def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
         stats=stats_html,
         position=pos_html,
         equity_chart=line_chart(equity, Box(height=220.0), baseline=cfg.start_cash, label="equity"),
-        price_chart=candle_chart(candles, trades),
+        price_charts=_market_charts(by_symbol, prices, trades),
         fitness_chart=fitness_chart(generations),
         champion=champion_html,
         trades=_table(
@@ -474,13 +504,7 @@ $refresh
       <div class="legend"><span>dashed line = starting capital</span></div>
     </section>
 
-    <section class="card full">
-      <h2>Price and trades</h2>
-      $price_chart
-      <div class="legend">
-        <span>&#9650; entry</span><span>&#9675; exit (green = win, red = loss)</span>
-      </div>
-    </section>
+    $price_charts
 
     <section class="card">
       <h2>Evolution</h2>

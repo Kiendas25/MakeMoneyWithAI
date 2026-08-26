@@ -105,9 +105,12 @@ class RiskManager:
         risk_scale: float,
         size_mult: float = 1.0,
         now_ms: Optional[int] = None,
+        symbol: Optional[str] = None,
+        open_positions: int = 0,
     ) -> RiskDecision:
         now = now_ms if now_ms is not None else int(time.time() * 1000)
         self._roll_day(equity, now)
+        market = symbol or self.cfg.symbol
 
         if self.halted:
             return RiskDecision(False, 0.0, f"halted: {self.state.get('halt_reason')}")
@@ -115,8 +118,15 @@ class RiskManager:
             return RiskDecision(False, 0.0, "no signal")
         if signal.direction < 0 and not self.cfg.allow_short:
             return RiskDecision(False, 0.0, "shorting disabled by config")
-        if now < int(self.state.get("cooldown_until", 0)):
-            return RiskDecision(False, 0.0, "cooling down after a loss")
+        if open_positions >= self.cfg.max_open_positions:
+            return RiskDecision(
+                False, 0.0,
+                f"already holding {open_positions} positions "
+                f"(cap {self.cfg.max_open_positions})")
+        # A loss cools down the coin that produced it, not the whole book: one
+        # bad trade in SOL is no reason to stand aside in BTC.
+        if now < int(self._cooldowns().get(market, 0)):
+            return RiskDecision(False, 0.0, f"cooling down after a loss in {market}")
         if int(self.state.get("trades_today", 0)) >= self.cfg.max_trades_per_day:
             return RiskDecision(False, 0.0, "daily trade cap reached")
 
@@ -135,12 +145,21 @@ class RiskManager:
         return RiskDecision(True, qty, "within risk limits")
 
     # ------------------------------------------------------------------
+    def _cooldowns(self) -> Dict[str, int]:
+        book = self.state.get("cooldowns")
+        if isinstance(book, dict):
+            return book
+        legacy = int(self.state.get("cooldown_until", 0) or 0)
+        return {self.cfg.symbol: legacy} if legacy else {}
+
     def on_trade_closed(self, trade: Trade, equity: float) -> None:
         self.state["trades_today"] = int(self.state.get("trades_today", 0)) + 1
         if trade.pnl < 0 and self.cfg.cooldown_bars_after_loss > 0:
-            self.state["cooldown_until"] = trade.exit_ts + timeframe_ms(
+            cooldowns = self._cooldowns()
+            cooldowns[trade.symbol] = trade.exit_ts + timeframe_ms(
                 self.cfg.timeframe
             ) * self.cfg.cooldown_bars_after_loss
+            self.state["cooldowns"] = cooldowns
         self._save()
         self.observe_equity(equity, trade.exit_ts)
         if self.daily_loss_pct(equity) >= self.cfg.max_daily_loss_pct:

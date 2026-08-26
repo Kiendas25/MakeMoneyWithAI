@@ -11,7 +11,7 @@ import json
 import os
 from dataclasses import dataclass, asdict, fields
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 ENV_PREFIX = "CRYPTO_AGENT_"
 
@@ -19,7 +19,8 @@ ENV_PREFIX = "CRYPTO_AGENT_"
 @dataclass
 class Config:
     # --- market ---
-    symbol: str = "BTC/USDT"
+    symbol: str = "BTC/USDT"  # primary; `symbols` widens the universe
+    symbols: str = ""  # comma-separated, e.g. "BTC/USDT,ETH/USDT,SOL/USDT"
     timeframe: str = "1h"
     provider: str = "synthetic"  # synthetic | binance | ccxt
     exchange: str = "binance"  # used when provider == ccxt
@@ -43,6 +44,7 @@ class Config:
     max_daily_loss_pct: float = 0.04
     max_drawdown_pct: float = 0.20  # kill switch, persisted across restarts
     max_trades_per_day: int = 12
+    max_open_positions: int = 3  # across the whole universe
     cooldown_bars_after_loss: int = 2
     min_notional: float = 10.0
     allow_short: bool = False  # spot-style default; genomes may still want it
@@ -71,6 +73,22 @@ class Config:
     llm_model: str = "claude-sonnet-5"
 
     # ------------------------------------------------------------------
+    @property
+    def symbol_list(self) -> List[str]:
+        """Every symbol the agent trades, primary first, de-duplicated.
+
+        One process covering several coins beats one process per coin: the
+        portfolio-level risk limits actually see the whole book, and Brain 2's
+        lessons are shared, so what the agent learns about high-volatility
+        downtrends on one coin informs the next entry on another.
+        """
+        out: List[str] = []
+        for raw in [self.symbol, *self.symbols.split(",")]:
+            name = raw.strip().upper()
+            if name and name not in out:
+                out.append(name)
+        return out
+
     @property
     def root(self) -> Path:
         return Path(self.data_dir).expanduser().resolve()
@@ -149,6 +167,11 @@ class Config:
             raise ValueError("start_cash must be positive")
         if self.history_bars <= self.oos_bars + 100:
             raise ValueError("history_bars must exceed oos_bars by at least 100")
+        if self.max_open_positions < 1:
+            raise ValueError("max_open_positions must be at least 1")
+        for name in self.symbol_list:
+            if "/" not in name:
+                raise ValueError(f"symbol {name!r} must look like BASE/QUOTE, e.g. BTC/USDT")
 
 
 _TRUE = {"1", "true", "yes", "on"}

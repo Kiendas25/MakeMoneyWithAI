@@ -22,15 +22,25 @@ import logging
 import random
 import statistics
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from ..brain.memory import DualBrain
 from ..config import Config
-from ..core.types import BacktestResult, Candle, Lesson, fitness_score
+from ..core.types import BacktestMetrics, BacktestResult, Candle, Lesson, fitness_score
 from ..strategy.backtest import walk_forward
 from ..strategy.genome import Genome, seed_population
 
 log = logging.getLogger(__name__)
+
+History = Union[Dict[str, Sequence[Candle]], Sequence[Candle]]
+
+
+def _as_markets(history: History, primary: str) -> Dict[str, Sequence[Candle]]:
+    """Accept a symbol->candles map, or a bare series for the single-market case."""
+    if isinstance(history, dict):
+        return {name: rows for name, rows in history.items() if rows}
+    return {primary: history} if history else {}
+
 
 POPULATION_KEY = "evolution.population"
 BEST_FITNESS_KEY = "evolution.best_fitness"
@@ -43,12 +53,17 @@ class Evaluation:
     oos_fitness: float
     in_sample: BacktestResult
     out_sample: BacktestResult
+    per_symbol: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    pooled_oos_trades: int = 0
+    worst_oos_drawdown: float = 0.0
 
     @property
     def metrics(self) -> Dict[str, Any]:
         return {
             "in_sample": self.in_sample.metrics.to_dict(),
             "out_sample": self.out_sample.metrics.to_dict(),
+            "per_symbol": self.per_symbol,
+            "pooled_oos_trades": self.pooled_oos_trades,
         }
 
 
@@ -123,14 +138,45 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
     # Evaluation
     # ------------------------------------------------------------------
-    def evaluate(self, genome: Genome, candles: Sequence[Candle]) -> Evaluation:
-        in_sample, out_sample = walk_forward(genome, candles, self.cfg)
+    def evaluate(self, genome: Genome, history: "History") -> Evaluation:
+        """Score a genome across the whole universe.
+
+        A strategy that only works on one coin has probably fitted that coin's
+        noise, so fitness is the mean across markets while the trade count and
+        drawdown that gate promotion are pooled - five markets also mean five
+        times the evidence per generation.
+        """
+        markets = _as_markets(history, self.cfg.symbol)
+        per_symbol: Dict[str, Dict[str, float]] = {}
+        in_scores: List[float] = []
+        oos_scores: List[float] = []
+        first_in = first_oos = None
+        pooled_oos_trades = 0
+        worst_oos_dd = 0.0
+        for symbol, candles in markets.items():
+            in_sample, out_sample = walk_forward(genome, candles, self.cfg)
+            in_score = fitness_score(in_sample.metrics)
+            oos_score = fitness_score(out_sample.metrics)
+            in_scores.append(in_score)
+            oos_scores.append(oos_score)
+            pooled_oos_trades += out_sample.metrics.trades
+            worst_oos_dd = max(worst_oos_dd, out_sample.metrics.max_drawdown)
+            per_symbol[symbol] = {"in_sample": in_score, "out_of_sample": oos_score,
+                                  "trades": out_sample.metrics.trades}
+            if first_in is None:
+                first_in, first_oos = in_sample, out_sample
+        if first_in is None:  # no usable market data at all
+            empty = BacktestResult(BacktestMetrics(final_equity=self.cfg.start_cash))
+            first_in = first_oos = empty
         return Evaluation(
             genome=genome,
-            fitness=fitness_score(in_sample.metrics),
-            oos_fitness=fitness_score(out_sample.metrics),
-            in_sample=in_sample,
-            out_sample=out_sample,
+            fitness=statistics.fmean(in_scores) if in_scores else -1.0,
+            oos_fitness=statistics.fmean(oos_scores) if oos_scores else -1.0,
+            in_sample=first_in,
+            out_sample=first_oos,
+            per_symbol=per_symbol,
+            pooled_oos_trades=pooled_oos_trades,
+            worst_oos_drawdown=worst_oos_dd,
         )
 
     def gene_nudges(self) -> Dict[str, float]:
@@ -150,13 +196,13 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
     # One generation
     # ------------------------------------------------------------------
-    def run_generation(self, candles: Sequence[Candle]) -> GenerationReport:
+    def run_generation(self, history: "History") -> GenerationReport:
         population = self.load_population()
         generation = self.brain.b1.last_generation() + 1
         nudges = self.gene_nudges()
 
         evaluations = sorted(
-            (self.evaluate(g, candles) for g in population),
+            (self.evaluate(g, history) for g in population),
             key=lambda e: e.fitness,
             reverse=True,
         )
@@ -189,7 +235,8 @@ class EvolutionEngine:
             f"{best.genome.describe()}",
             f"population mean fitness {mean_fitness:+.3f}; "
             f"best out-of-sample {best.oos_fitness:+.3f} over "
-            f"{best.out_sample.metrics.trades} hold-out trades",
+            f"{best.pooled_oos_trades} hold-out trades across "
+            f"{len(best.per_symbol)} market(s)",
         ]
         # Only a generation that changed something is worth remembering. Writing
         # a note every time would bury the trade lessons that actually inform
@@ -225,9 +272,9 @@ class EvolutionEngine:
         log.info(report.summary())
         return report
 
-    def evolve(self, candles: Sequence[Candle], generations: Optional[int] = None) -> List[GenerationReport]:
+    def evolve(self, history: "History", generations: Optional[int] = None) -> List[GenerationReport]:
         return [
-            self.run_generation(candles)
+            self.run_generation(history)
             for _ in range(generations or self.cfg.generations_per_cycle)
         ]
 
@@ -244,8 +291,8 @@ class EvolutionEngine:
         current = self.brain.b1.champion()
         candidates = [
             e for e in evaluations
-            if e.out_sample.metrics.trades >= self.cfg.min_trades_for_promotion
-            and e.out_sample.metrics.max_drawdown <= self.cfg.max_drawdown_pct
+            if e.pooled_oos_trades >= self.cfg.min_trades_for_promotion
+            and e.worst_oos_drawdown <= self.cfg.max_drawdown_pct
         ]
         if not candidates:
             return False, (current or {}).get("id", "none")

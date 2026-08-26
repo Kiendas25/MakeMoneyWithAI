@@ -9,6 +9,7 @@ Three things make it more than a bot with indicators:
 |---|---|
 | **Autonomous** | One loop: perceive → recall → decide → risk-check → act → record → evolve. It survives restarts, network outages and its own crashes, and holds a kill switch it cannot override. |
 | **Two brains** | **Brain 1** is exact and episodic (SQLite ledger of candles, decisions, fills, trades, genomes, equity). **Brain 2** is semantic and associative (vector memory of lessons, searched by meaning). Recall changes the next order's size — memory that cannot change behaviour is decoration. |
+| **Multi-market** | One process trades a whole universe of coins against a shared champion, a shared Brain 2 and portfolio-wide risk limits. Five markets mean five times the trades per hour, so it learns five times faster. |
 | **Self-evolving** | A genetic algorithm breeds strategy genomes against the agent's own recent history, selects in-sample, and promotes to champion **only on out-of-sample evidence**. Reflection over past trades biases which genes mutate, so the search is informed rather than blind. |
 
 Runs on the **standard library alone** — no numpy, no pandas, no framework.
@@ -47,7 +48,7 @@ is not a line continuation there — the backtick `` ` `` is):
 git clone -b claude/self-evolving-crypto-agent-a9r543 https://github.com/Kiendas25/MakeMoneyWithAI.git
 cd MakeMoneyWithAI\self_evolving_trader
 python -m pytest tests -q
-python -m crypto_agent --provider binance --symbol BTC/USDT --timeframe 5m --mode paper run --poll-seconds 20
+python -m crypto_agent --provider binance --top5 --timeframe 5m --mode paper run --poll-seconds 20
 ```
 
 If Binance answers `451`, the endpoint is geo-blocked where you are; switch
@@ -115,6 +116,37 @@ them into a `MemoryBias`:
 
 ---
 
+## Trading a universe
+
+`--top5` trades the five largest non-stablecoin coins; `--symbols` takes any
+comma-separated list.
+
+```bash
+python3 -m crypto_agent --provider binance --top5 --timeframe 5m run
+python3 -m crypto_agent --provider binance --symbols "BTC/USDT,ETH/USDT,LINK/USDT" run
+```
+
+One process, not five. That matters:
+
+- **One champion genome across every market.** A strategy that only works on one
+  coin has usually fitted that coin's noise, so fitness is the mean across
+  markets while the hold-out trade count and worst drawdown that gate promotion
+  are pooled.
+- **One Brain 2.** A lesson learned about high-volatility downtrends in SOL
+  biases the next entry in BTC. Cross-market transfer is most of the point.
+- **Portfolio-wide risk.** The drawdown kill switch, daily loss limit and
+  `max_open_positions` cap see the whole book, which five separate processes
+  never could. A loss cools down only the coin that caused it.
+- **Faster learning.** Five markets produce roughly five times the closed trades
+  per hour, and the lessons and generations that follow arrive proportionally
+  sooner.
+
+The top-5 list is a snapshot of market-cap rankings, not a recommendation, and
+pairs differ by venue — Coinbase has no BNB market, so use `--symbols` there.
+A market that fails to fetch is skipped for that cycle; the rest still trade.
+
+---
+
 ## Self-evolution
 
 Every `evolve_every_steps` iterations the agent breeds a new generation against
@@ -163,8 +195,9 @@ lives in Brain 1, so a halted agent stays halted across restarts:
 | Notional cap | 35% of equity |
 | Daily loss limit | 4% — no new entries until the next market day |
 | Drawdown kill switch | 20% from peak → halt, cleared only by `resume-risk` |
-| Trades per day | 12 |
-| Cooldown after a loss | 2 bars |
+| Trades per day | 12 (whole book) |
+| Open positions | 3 across the universe |
+| Cooldown after a loss | 2 bars, on that coin only |
 | Shorting | off |
 
 Other properties that matter for running unattended:

@@ -21,7 +21,7 @@ import os
 import signal
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 from .brain.memory import DualBrain, MemoryBias
 from .config import Config
@@ -42,11 +42,14 @@ LAST_BAR_KEY = "agent.last_bar_ts"
 
 @dataclass
 class StepResult:
+    """What the agent decided about one symbol on one bar."""
+
     ts: int
     price: float
     equity: float
     action: str
     reason: str
+    symbol: str = ""
     signal: Optional[Signal] = None
     trade: Optional[Trade] = None
     bias: Optional[MemoryBias] = None
@@ -54,8 +57,25 @@ class StepResult:
     lessons: List[str] = field(default_factory=list)
 
     def line(self) -> str:
-        head = f"[{_fmt_ts(self.ts)}] {self.action:<14} px={self.price:,.2f} eq={self.equity:,.2f}"
+        market = f"{self.symbol:<9} " if self.symbol else ""
+        head = (f"[{_fmt_ts(self.ts)}] {market}{self.action:<14} "
+                f"px={self.price:,.2f} eq={self.equity:,.2f}")
         return f"{head}  {self.reason}"
+
+
+@dataclass
+class CycleResult:
+    """One pass over the whole universe."""
+
+    ts: int
+    equity: float
+    results: List[StepResult] = field(default_factory=list)
+    generation: Optional[GenerationReport] = None
+    lessons: List[str] = field(default_factory=list)
+
+    @property
+    def notable(self) -> List[StepResult]:
+        return [r for r in self.results if r.action not in ("flat", "hold", "waiting", "no_data")]
 
 
 class TradingAgent:
@@ -65,6 +85,7 @@ class TradingAgent:
         brain: Optional[DualBrain] = None,
         provider=None,
         broker=None,
+        record_config: bool = True,
     ) -> None:
         cfg.ensure_dirs()
         self.cfg = cfg
@@ -76,7 +97,12 @@ class TradingAgent:
         self.reflector = make_reflector(cfg)
         self._stop = False
         self._champion: Optional[Genome] = None
-        self.brain.b1.set_state("agent.config", cfg.to_dict())
+        # Only a trading agent records what it booted with. An inspection
+        # command constructing one must not overwrite the running agent's
+        # config with its own defaults - that is how `status` ended up
+        # reporting synthetic 1h while a 5m Binance agent was live.
+        if record_config:
+            self.brain.b1.set_state("agent.config", cfg.to_dict())
 
     # ------------------------------------------------------------------
     def close(self) -> None:
@@ -112,56 +138,102 @@ class TradingAgent:
         return self.champion
 
     # ------------------------------------------------------------------
-    def closed_candles(self, now_ms: Optional[int] = None) -> List[Candle]:
+    def closed_candles(self, now_ms: Optional[int] = None,
+                       symbol: Optional[str] = None) -> List[Candle]:
         """Only fully closed bars. Acting on a forming candle is how a backtest
         that looks profitable turns into a live system that buys wicks."""
         now = now_ms if now_ms is not None else int(time.time() * 1000)
         step = timeframe_ms(self.cfg.timeframe)
-        raw = self.provider.fetch_ohlcv(self.cfg.symbol, self.cfg.timeframe, self.cfg.history_bars)
+        raw = self.provider.fetch_ohlcv(
+            symbol or self.cfg.symbol, self.cfg.timeframe, self.cfg.history_bars
+        )
         return [c for c in raw if c.ts + step <= now]
+
+    def perceive(self, now_ms: int) -> Dict[str, List[Candle]]:
+        """Fetch every symbol before deciding anything.
+
+        Marking the book to market needs all the prices, and a risk check that
+        saw only one of them would size the second entry against a stale
+        equity figure.
+        """
+        history: Dict[str, List[Candle]] = {}
+        for symbol in self.cfg.symbol_list:
+            try:
+                candles = self.closed_candles(now_ms, symbol)
+            except Exception as exc:  # one bad market must not stop the rest
+                log.warning("could not fetch %s: %s", symbol, exc)
+                self.brain.b1.log_event("fetch_error", f"{symbol}: {exc}", level="WARNING")
+                continue
+            if candles:
+                history[symbol] = candles
+        return history
 
     # ------------------------------------------------------------------
     def step(self, now_ms: Optional[int] = None) -> StepResult:
+        """One decision on the primary symbol - the single-market view."""
+        cycle = self.cycle(now_ms)
+        for result in cycle.results:
+            if result.symbol == self.cfg.symbol:
+                return result
+        return StepResult(cycle.ts, 0.0, cycle.equity, "no_data",
+                          "no closed candles for the primary symbol",
+                          symbol=self.cfg.symbol)
+
+    def cycle(self, now_ms: Optional[int] = None) -> CycleResult:
+        """Walk the whole universe once: perceive, then decide per symbol."""
         now = now_ms if now_ms is not None else int(time.time() * 1000)
-        candles = self.closed_candles(now)
-        if len(candles) < 80:
-            return StepResult(now, 0.0, self.broker.cash, "no_data",
-                              f"only {len(candles)} closed candles available")
+        history = self.perceive(now)
+        prices = {sym: candles[-1].close for sym, candles in history.items()}
+        equity = self.broker.equity(prices) if prices else self.broker.cash
 
-        last = candles[-1]
-        price = last.close
-        equity = self.broker.equity(price)
-        self.risk.observe_equity(equity, last.ts)
-        position = self.brain.b1.load_position()
-        self.brain.b1.record_equity(
-            last.ts, equity, self.broker.cash, abs(position.qty * price) if position else 0.0
-        )
+        if not history:
+            return CycleResult(now, equity, [StepResult(
+                now, 0.0, equity, "no_data", "no market data available", symbol=self.cfg.symbol)])
 
-        if self.brain.b1.get_state(LAST_BAR_KEY) == last.ts:
-            return StepResult(last.ts, price, equity, "waiting", "no new closed bar yet")
-        self.brain.b1.set_state(LAST_BAR_KEY, last.ts)
+        newest_ts = max(candles[-1].ts for candles in history.values())
+        self.risk.observe_equity(equity, newest_ts)
+        positions = self.brain.b1.load_positions()
+        exposure = sum(abs(p.qty) * prices.get(sym, p.entry_price)
+                       for sym, p in positions.items())
+        self.brain.b1.record_equity(newest_ts, equity, self.broker.cash, exposure)
+
+        if self.brain.b1.get_state(LAST_BAR_KEY) == newest_ts:
+            return CycleResult(newest_ts, equity, [StepResult(
+                newest_ts, prices.get(self.cfg.symbol, 0.0), equity, "waiting",
+                "no new closed bar yet", symbol=self.cfg.symbol)])
+        self.brain.b1.set_state(LAST_BAR_KEY, newest_ts)
 
         steps = int(self.brain.b1.get_state(STEP_COUNT_KEY, 0)) + 1
         self.brain.b1.set_state(STEP_COUNT_KEY, steps)
 
-        genome = self._genome_for_position(position) if position else self.champion
-        frame = rules.compute_frame(genome, candles)
-        i = len(candles) - 1
-        signal = rules.signal_at(genome, frame, i)
+        results: List[StepResult] = []
+        for symbol, candles in history.items():
+            if len(candles) < 80:
+                results.append(StepResult(
+                    candles[-1].ts, candles[-1].close, equity, "no_data",
+                    f"only {len(candles)} closed candles available", symbol=symbol))
+                continue
+            position = positions.get(symbol)
+            genome = self._genome_for_position(position) if position else self.champion
+            frame = rules.compute_frame(genome, candles)
+            i = len(candles) - 1
+            signal = rules.signal_at(genome, frame, i)
+            if position is not None:
+                results.append(self._manage_position(
+                    symbol, position, genome, frame, i, signal, equity, prices))
+            else:
+                open_count = len(self.brain.b1.load_positions())
+                results.append(self._consider_entry(
+                    symbol, genome, frame, i, signal, equity, open_count))
 
-        result: StepResult
-        if position is not None:
-            result = self._manage_position(position, genome, frame, i, signal, equity)
-        else:
-            result = self._consider_entry(genome, frame, i, signal, equity)
-
-        result.lessons = self._maybe_maintenance(steps, candles, result)
-        return result
+        cycle = CycleResult(newest_ts, self.broker.equity(prices), results)
+        cycle.lessons = self._maybe_maintenance(steps, history, cycle)
+        return cycle
 
     # ------------------------------------------------------------------
     def _manage_position(
-        self, position: Position, genome: Genome, frame: rules.Frame, i: int,
-        signal: Signal, equity: float
+        self, symbol: str, position: Position, genome: Genome, frame: rules.Frame,
+        i: int, signal: Signal, equity: float, prices: Optional[Dict[str, float]] = None
     ) -> StepResult:
         candle = frame.candles[i]
         position.bars_held += 1
@@ -169,25 +241,26 @@ class TradingAgent:
         reason = rules.exit_reason(genome, frame, i, position, signal)
 
         if not reason:
-            self.brain.b1.save_position(position)
+            self.brain.b1.save_position(symbol, position)
             self.brain.b1.record_decision(
-                candle.ts, self.cfg.symbol, "hold", signal, genome.id, executed=False
+                candle.ts, symbol, "hold", signal, genome.id, executed=False
             )
             return StepResult(
                 candle.ts, candle.close, equity, "hold",
                 f"holding {position.side} from {position.entry_price:,.2f} "
                 f"({position.unrealized_pct(candle.close) * 100:+.2f}%), stop {position.stop or 0:,.2f}",
+                symbol=symbol,
                 signal=signal,
             )
 
         exit_price = rules.exit_price_for(reason, position, candle)
         side = "sell" if position.qty > 0 else "buy"
-        fill = self.broker.market_order(side, abs(position.qty), exit_price, candle.ts)
+        fill = self.broker.market_order(side, abs(position.qty), exit_price, candle.ts, symbol)
         entry_notional = abs(position.entry_price * position.qty)
         entry_fee = entry_notional * (self.cfg.fee_bps / 10_000.0)
         pnl = (fill.price - position.entry_price) * position.qty - fill.fee - entry_fee
         trade = Trade(
-            symbol=self.cfg.symbol,
+            symbol=symbol,
             side=position.side,
             qty=abs(position.qty),
             entry_ts=position.entry_ts,
@@ -197,46 +270,52 @@ class TradingAgent:
             pnl=pnl,
             pnl_pct=pnl / entry_notional if entry_notional else 0.0,
             fees=fill.fee + entry_fee,
-            reason_open=self.brain.b1.get_state("agent.open_reason", "") or "",
+            reason_open=self.brain.b1.get_state(f"agent.open_reason:{symbol}", "") or "",
             reason_close=reason,
             genome_id=position.genome_id or genome.id,
             regime=position.regime,
         )
         self.brain.remember_trade(trade)
-        self.brain.b1.save_position(None)
-        equity_after = self.broker.equity(candle.close)
+        self.brain.b1.save_position(symbol, None)
+        marks = dict(prices or {})
+        marks[symbol] = candle.close
+        equity_after = self.broker.equity(marks)
         self.risk.on_trade_closed(trade, equity_after)
         self.brain.b1.record_decision(
-            candle.ts, self.cfg.symbol, f"close:{reason}", signal, genome.id, executed=True
+            candle.ts, symbol, f"close:{reason}", signal, genome.id, executed=True
         )
         return StepResult(
             candle.ts, candle.close, equity_after, f"close:{reason}",
             f"closed {trade.side} at {fill.price:,.2f} for {trade.pnl_pct * 100:+.2f}% "
             f"({trade.pnl:+,.2f})",
+            symbol=symbol,
             signal=signal,
             trade=trade,
         )
 
     # ------------------------------------------------------------------
     def _consider_entry(
-        self, genome: Genome, frame: rules.Frame, i: int, signal: Signal, equity: float
+        self, symbol: str, genome: Genome, frame: rules.Frame, i: int,
+        signal: Signal, equity: float, open_positions: int = 0
     ) -> StepResult:
         candle = frame.candles[i]
         if signal.direction == 0:
             self.brain.b1.record_decision(
-                candle.ts, self.cfg.symbol, "flat", signal, genome.id, executed=False
+                candle.ts, symbol, "flat", signal, genome.id, executed=False
             )
-            return StepResult(candle.ts, candle.close, equity, "flat", signal.reason, signal=signal)
+            return StepResult(candle.ts, candle.close, equity, "flat", signal.reason,
+                              symbol=symbol, signal=signal)
 
-        bias = self.brain.advice(self.cfg.symbol, signal)
+        bias = self.brain.advice(symbol, signal)
         if bias.vetoes(signal.direction):
             self.brain.b1.record_decision(
-                candle.ts, self.cfg.symbol, "veto:memory", signal, genome.id, executed=False
+                candle.ts, symbol, "veto:memory", signal, genome.id, executed=False
             )
             note = bias.notes[0] if bias.notes else "similar setups lost money"
             return StepResult(
                 candle.ts, candle.close, equity, "veto:memory",
-                f"memory vetoed the entry - {note}", signal=signal, bias=bias,
+                f"memory vetoed the entry - {note}",
+                symbol=symbol, signal=signal, bias=bias,
             )
 
         entry_hint = candle.close
@@ -250,21 +329,23 @@ class TradingAgent:
             risk_scale=float(genome.genes["risk_scale"]),
             size_mult=bias.size_mult,
             now_ms=candle.ts,
+            symbol=symbol,
+            open_positions=open_positions,
         )
         if not decision.approved:
             self.brain.b1.record_decision(
-                candle.ts, self.cfg.symbol, "veto:risk", signal, genome.id, executed=False
+                candle.ts, symbol, "veto:risk", signal, genome.id, executed=False
             )
             return StepResult(
                 candle.ts, candle.close, equity, "veto:risk", decision.reason,
-                signal=signal, bias=bias,
+                symbol=symbol, signal=signal, bias=bias,
             )
 
         side = "buy" if signal.direction > 0 else "sell"
-        fill = self.broker.market_order(side, decision.qty, entry_hint, candle.ts)
+        fill = self.broker.market_order(side, decision.qty, entry_hint, candle.ts, symbol)
         stop, take_profit = rules.initial_stops(genome, frame, i, fill.price, signal.direction)
         position = Position(
-            symbol=self.cfg.symbol,
+            symbol=symbol,
             qty=decision.qty * signal.direction,
             entry_price=fill.price,
             entry_ts=candle.ts,
@@ -273,21 +354,22 @@ class TradingAgent:
             genome_id=genome.id,
             regime=signal.regime,
         )
-        self.brain.b1.save_position(position)
-        self.brain.b1.set_state("agent.open_reason", f"{signal.reason} | memory {bias.describe()}")
+        self.brain.b1.save_position(symbol, position)
+        self.brain.b1.set_state(f"agent.open_reason:{symbol}",
+                                f"{signal.reason} | memory {bias.describe()}")
         self.brain.b1.record_decision(
-            candle.ts, self.cfg.symbol, f"open:{position.side}", signal, genome.id, executed=True
+            candle.ts, symbol, f"open:{position.side}", signal, genome.id, executed=True
         )
         return StepResult(
-            candle.ts, candle.close, self.broker.equity(candle.close), f"open:{position.side}",
+            candle.ts, candle.close, equity, f"open:{position.side}",
             f"opened {position.side} {decision.qty:.6f} at {fill.price:,.2f} "
             f"(stop {stop or 0:,.2f}, target {take_profit or 0:,.2f}; {bias.describe()})",
-            signal=signal, bias=bias,
+            symbol=symbol, signal=signal, bias=bias,
         )
 
     # ------------------------------------------------------------------
     def _maybe_maintenance(
-        self, steps: int, candles: Sequence[Candle], result: StepResult
+        self, steps: int, history: Dict[str, List[Candle]], cycle: "CycleResult"
     ) -> List[str]:
         """Sleep and dream: consolidate memories, then evolve."""
         lessons: List[str] = []
@@ -295,54 +377,60 @@ class TradingAgent:
             written = self.brain.consolidate(self.reflector)
             lessons = [l.text for l in written]
         if self.cfg.evolve_every_steps and steps % self.cfg.evolve_every_steps == 0:
-            reports = self.engine.evolve(candles)
+            reports = self.engine.evolve(history)
             if reports:
-                result.generation = reports[-1]
+                cycle.generation = reports[-1]
                 if any(r.promoted for r in reports):
                     self.refresh_champion()
         return lessons
 
     # ------------------------------------------------------------------
-    def run(self, max_steps: Optional[int] = None, on_step=None) -> List[StepResult]:
-        """Run autonomously until stopped (or ``max_steps`` iterations)."""
+    def run(self, max_steps: Optional[int] = None, on_step=None) -> List[CycleResult]:
+        """Run autonomously until stopped (or ``max_steps`` cycles).
+
+        A cycle is one pass over the whole universe, so ``max_steps`` counts
+        polls, not symbols.
+        """
         self._install_signal_handlers()
         lock = _acquire_lock(self.cfg)
         self.brain.b1.log_event(
             "start",
-            f"agent started in {self.cfg.mode} mode on {self.cfg.symbol} {self.cfg.timeframe} "
+            f"agent started in {self.cfg.mode} mode on "
+            f"{', '.join(self.cfg.symbol_list)} {self.cfg.timeframe} "
             f"via {getattr(self.provider, 'name', 'provider')}",
             {"config": self.cfg.to_dict()},
         )
-        results: List[StepResult] = []
+        cycles: List[CycleResult] = []
         failures = 0
         try:
-            while not self._stop and (max_steps is None or len(results) < max_steps):
+            while not self._stop and (max_steps is None or len(cycles) < max_steps):
                 started = time.time()
                 try:
-                    result = self.step()
+                    cycle = self.cycle()
                     failures = 0
-                    results.append(result)
-                    log.info(result.line())
+                    cycles.append(cycle)
+                    for result in cycle.results:
+                        log.info(result.line())
                     if on_step:
-                        on_step(result)
+                        on_step(cycle)
                 except Exception as exc:  # keep the loop alive; record everything
                     failures += 1
-                    log.exception("step failed: %s", exc)
+                    log.exception("cycle failed: %s", exc)
                     self.brain.b1.log_event("step_error", str(exc), level="ERROR")
                     if failures >= 10:
                         self.brain.b1.log_event(
-                            "stop", "10 consecutive step failures, stopping", level="ERROR"
+                            "stop", "10 consecutive failures, stopping", level="ERROR"
                         )
                         break
                     time.sleep(min(300.0, 2.0**failures))
-                if max_steps is not None and len(results) >= max_steps:
+                if max_steps is not None and len(cycles) >= max_steps:
                     break
                 elapsed = time.time() - started
                 self._sleep(max(0.0, self.cfg.poll_seconds - elapsed))
         finally:
-            self.brain.b1.log_event("stop", f"agent stopped after {len(results)} steps")
+            self.brain.b1.log_event("stop", f"agent stopped after {len(cycles)} cycles")
             _release_lock(lock)
-        return results
+        return cycles
 
     def _sleep(self, seconds: float) -> None:
         deadline = time.time() + seconds
@@ -362,32 +450,36 @@ class TradingAgent:
 
     # ------------------------------------------------------------------
     def status(self) -> Dict[str, Any]:
-        candles = self.brain.b1.load_candles(self.cfg.symbol, self.cfg.timeframe, 1)
-        price = candles[-1].close if candles else 0.0
-        position = self.brain.b1.load_position()
+        prices: Dict[str, float] = {}
+        for symbol in self.cfg.symbol_list:
+            rows = self.brain.b1.load_candles(symbol, self.cfg.timeframe, 1)
+            if rows:
+                prices[symbol] = rows[-1].close
+        positions = self.brain.b1.load_positions()
         champion = self.engine.champion_record()
         return {
             "mode": self.cfg.mode,
-            "symbol": self.cfg.symbol,
+            "symbols": self.cfg.symbol_list,
             "timeframe": self.cfg.timeframe,
             "provider": getattr(self.provider, "name", "unknown"),
             "broker": getattr(self.broker, "name", "unknown"),
-            "price": price,
+            "prices": prices,
             "cash": self.broker.cash,
-            "equity": self.broker.equity(price) if price else self.broker.cash,
+            "equity": self.broker.equity(prices) if prices else self.broker.cash,
             "steps": self.brain.b1.get_state(STEP_COUNT_KEY, 0),
-            "position": (
-                {
+            "positions": {
+                symbol: {
                     "side": position.side,
                     "qty": position.qty,
                     "entry": position.entry_price,
                     "stop": position.stop,
                     "take_profit": position.take_profit,
-                    "unrealized_pct": position.unrealized_pct(price) if price else 0.0,
+                    "unrealized_pct": (
+                        position.unrealized_pct(prices[symbol]) if symbol in prices else 0.0
+                    ),
                 }
-                if position
-                else None
-            ),
+                for symbol, position in positions.items()
+            },
             "risk": self.risk.snapshot(),
             "champion": (
                 {

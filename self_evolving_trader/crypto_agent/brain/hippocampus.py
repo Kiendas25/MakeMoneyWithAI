@@ -409,13 +409,37 @@ class Hippocampus:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    # -- open position --------------------------------------------------
-    def save_position(self, position: Optional[Position]) -> None:
-        self.set_state("open_position", _position_to_dict(position) if position else None)
+    # -- open positions (one per symbol) --------------------------------
+    POSITIONS_KEY = "open_positions"
+    LEGACY_POSITION_KEY = "open_position"
 
-    def load_position(self) -> Optional[Position]:
-        raw = self.get_state("open_position")
-        return Position(**raw) if raw else None
+    def save_position(self, symbol: str, position: Optional[Position]) -> None:
+        book = self.load_positions()
+        if position is None:
+            book.pop(symbol, None)
+        else:
+            book[symbol] = position
+        self.set_state(
+            self.POSITIONS_KEY,
+            {name: _position_to_dict(p) for name, p in book.items()},
+        )
+
+    def load_position(self, symbol: str) -> Optional[Position]:
+        return self.load_positions().get(symbol)
+
+    def load_positions(self) -> Dict[str, Position]:
+        raw = self.get_state(self.POSITIONS_KEY)
+        if raw is None:
+            # Brains written before the agent traded a universe kept a single
+            # unkeyed position; adopt it rather than stranding an open trade.
+            legacy = self.get_state(self.LEGACY_POSITION_KEY)
+            if not legacy:
+                return {}
+            position = Position(**legacy)
+            self.set_state(self.POSITIONS_KEY, {position.symbol: legacy})
+            self.set_state(self.LEGACY_POSITION_KEY, None)
+            return {position.symbol: position}
+        return {name: Position(**data) for name, data in raw.items()}
 
 
 def _position_to_dict(p: Position) -> Dict[str, Any]:

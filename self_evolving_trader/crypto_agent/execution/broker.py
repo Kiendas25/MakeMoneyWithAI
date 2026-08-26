@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Protocol
+from typing import Dict, Mapping, Optional, Protocol
 
 from ..config import Config
 from ..core.types import Fill
@@ -30,7 +30,8 @@ BROKER_STATE_KEY = "broker.state"
 class Broker(Protocol):
     name: str
 
-    def market_order(self, side: str, qty: float, price: float, ts: int) -> Fill:
+    def market_order(self, side: str, qty: float, price: float, ts: int,
+                     symbol: Optional[str] = None) -> Fill:
         ...
 
     @property
@@ -48,7 +49,13 @@ class PaperBroker:
         self.brain = brain
         state = brain.get_state(BROKER_STATE_KEY) or {}
         self._cash = float(state.get("cash", cfg.start_cash))
-        self._qty = float(state.get("qty", 0.0))
+        self._holdings: Dict[str, float] = {
+            str(k): float(v) for k, v in (state.get("holdings") or {}).items()
+        }
+        if "qty" in state and not self._holdings:  # book from the single-symbol era
+            legacy = float(state["qty"])
+            if legacy:
+                self._holdings[cfg.symbol] = legacy
 
     # ------------------------------------------------------------------
     @property
@@ -56,41 +63,64 @@ class PaperBroker:
         return self._cash
 
     @property
-    def qty(self) -> float:
-        return self._qty
+    def holdings(self) -> Dict[str, float]:
+        return dict(self._holdings)
 
-    def equity(self, price: float) -> float:
-        return self._cash + self._qty * price
+    @property
+    def qty(self) -> float:
+        """Units of the primary symbol - the single-symbol convenience view."""
+        return self.qty_of(self.cfg.symbol)
+
+    def qty_of(self, symbol: str) -> float:
+        return self._holdings.get(symbol, 0.0)
+
+    def equity(self, price: float | Mapping[str, float]) -> float:
+        """Cash plus every holding marked to the prices given.
+
+        Accepts a single price (primary symbol) or a symbol->price mapping, so
+        callers that only track one market keep working.
+        """
+        if isinstance(price, Mapping):
+            return self._cash + sum(
+                qty * float(price.get(sym, 0.0)) for sym, qty in self._holdings.items()
+            )
+        return self._cash + self.qty_of(self.cfg.symbol) * float(price)
 
     def _persist(self) -> None:
-        self.brain.set_state(BROKER_STATE_KEY, {"cash": self._cash, "qty": self._qty})
+        self.brain.set_state(
+            BROKER_STATE_KEY, {"cash": self._cash, "holdings": self._holdings}
+        )
 
-    def market_order(self, side: str, qty: float, price: float, ts: int) -> Fill:
+    def market_order(self, side: str, qty: float, price: float, ts: int,
+                     symbol: Optional[str] = None) -> Fill:
         if qty <= 0:
             raise ValueError("qty must be positive")
         if side not in ("buy", "sell"):
             raise ValueError("side must be 'buy' or 'sell'")
+        market = symbol or self.cfg.symbol
         slip = self.cfg.slippage_bps / 10_000.0
         fill_price = price * (1 + slip) if side == "buy" else price * (1 - slip)
         notional = qty * fill_price
         fee = notional * (self.cfg.fee_bps / 10_000.0)
         signed = qty if side == "buy" else -qty
         self._cash -= signed * fill_price + fee
-        self._qty += signed
-        if abs(self._qty) < 1e-12:
-            self._qty = 0.0
+        held = self._holdings.get(market, 0.0) + signed
+        if abs(held) < 1e-12:
+            self._holdings.pop(market, None)
+        else:
+            self._holdings[market] = held
         self._persist()
         fill = Fill(ts=ts, side=side, qty=qty, price=fill_price, fee=fee)
         self.brain.log_event(
             "fill",
-            f"paper {side} {qty:.6f} @ {fill_price:.2f} (fee {fee:.4f})",
-            {"cash": self._cash, "qty": self._qty},
+            f"paper {side} {qty:.6f} {market} @ {fill_price:.2f} (fee {fee:.4f})",
+            {"cash": self._cash, "holdings": self._holdings},
         )
         return fill
 
     def reset(self) -> None:
         self._cash = self.cfg.start_cash
-        self._qty = 0.0
+        self._holdings = {}
         self._persist()
 
 

@@ -19,6 +19,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +31,12 @@ from .core.types import fitness_score
 from .strategy.backtest import simulate, walk_forward
 from .strategy.genome import Genome
 
+#: The five largest non-stablecoin cryptocurrencies by market capitalisation at
+#: the time of writing. Rankings move - pass --symbols to choose your own
+#: universe, and check the pairs exist on your exchange (Coinbase, for one, has
+#: no BNB market).
+TOP5 = "BTC/USDT,ETH/USDT,XRP/USDT,BNB/USDT,SOL/USDT"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -38,7 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", help="path to a JSON config file")
     parser.add_argument("--data-dir", help="where the two brains live")
-    parser.add_argument("--symbol", help="e.g. BTC/USDT")
+    parser.add_argument("--symbol", help="primary market, e.g. BTC/USDT")
+    parser.add_argument("--symbols", help="comma-separated universe, e.g. 'BTC/USDT,ETH/USDT'")
+    parser.add_argument("--top5", action="store_true",
+                        help=f"trade the five largest coins: {TOP5}")
     parser.add_argument("--timeframe", help="1m 5m 15m 1h 4h 1d ...")
     parser.add_argument("--provider", choices=["synthetic", "binance", "ccxt"])
     parser.add_argument("--exchange", help="ccxt exchange id (with --provider ccxt)")
@@ -101,6 +111,7 @@ def config_from_args(args: argparse.Namespace, adopt_stored: bool = False, **ext
     overrides: Dict[str, Any] = {
         "data_dir": args.data_dir,
         "symbol": args.symbol,
+        "symbols": TOP5 if getattr(args, "top5", False) else args.symbols,
         "timeframe": args.timeframe,
         "provider": args.provider,
         "exchange": args.exchange,
@@ -170,10 +181,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     cfg = config_from_args(args, **extra)
     if cfg.mode == "live":
         print("!! LIVE MODE: real orders will be placed. Ctrl-C now if that is not intended.")
+    print(f"universe: {', '.join(cfg.symbol_list)} @ {cfg.timeframe} via {cfg.provider}")
     with TradingAgent(cfg) as agent:
-        results = agent.run(max_steps=args.steps, on_step=lambda r: print(r.line()))
-    print(f"\n{len(results)} steps completed.")
+        cycles = agent.run(max_steps=args.steps, on_step=_print_cycle)
+    print(f"\n{len(cycles)} cycles completed.")
     return 0
+
+
+def _print_cycle(cycle) -> None:
+    for result in cycle.results:
+        print(result.line())
+    if cycle.generation:
+        print(f"    evolution: {cycle.generation.summary()}")
+    for lesson in cycle.lessons[:3]:
+        print(f"    learned: {lesson}")
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
@@ -196,18 +217,19 @@ def cmd_demo(args: argparse.Namespace) -> int:
         clock = _replay_clock(agent, args.steps)
         opened = closed = vetoed = 0
         for now_ms in clock:
-            result = agent.step(now_ms=now_ms)
-            if result.action.startswith("open"):
-                opened += 1
-            elif result.action.startswith("close"):
-                closed += 1
-            elif result.action.startswith("veto"):
-                vetoed += 1
-            if result.action not in ("flat", "hold", "waiting"):
+            cycle = agent.cycle(now_ms=now_ms)
+            for result in cycle.results:
+                if result.action.startswith("open"):
+                    opened += 1
+                elif result.action.startswith("close"):
+                    closed += 1
+                elif result.action.startswith("veto"):
+                    vetoed += 1
+            for result in cycle.notable:
                 print(result.line())
-            if result.generation:
-                print(f"    evolution: {result.generation.summary()}")
-            for lesson in result.lessons[:2]:
+            if cycle.generation:
+                print(f"    evolution: {cycle.generation.summary()}")
+            for lesson in cycle.lessons[:2]:
                 print(f"    learned: {lesson}")
         status = agent.status()
 
@@ -239,7 +261,7 @@ def _replay_clock(agent: TradingAgent, steps: int) -> List[int]:
 
 def cmd_backtest(args: argparse.Namespace) -> int:
     cfg = config_from_args(args, adopt_stored=True)
-    with TradingAgent(cfg) as agent:
+    with TradingAgent(cfg, record_config=False) as agent:
         if args.genome_id:
             record = agent.brain.b1.get_genome(args.genome_id)
             if not record:
@@ -270,11 +292,13 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 def cmd_evolve(args: argparse.Namespace) -> int:
     cfg = config_from_args(args)
     with TradingAgent(cfg) as agent:
-        candles = agent.closed_candles()
-        if len(candles) < 200:
-            print(f"need at least 200 candles, have {len(candles)}", file=sys.stderr)
+        history = agent.perceive(int(time.time() * 1000))
+        usable = {sym: rows for sym, rows in history.items() if len(rows) >= 200}
+        if not usable:
+            print("need at least 200 candles in some market", file=sys.stderr)
             return 1
-        for report in agent.engine.evolve(candles, args.generations):
+        print(f"evolving against {', '.join(usable)}")
+        for report in agent.engine.evolve(usable, args.generations):
             print(report.summary())
         agent.refresh_champion()
         print(f"\nchampion: {agent.champion.describe()}")
@@ -283,14 +307,14 @@ def cmd_evolve(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = config_from_args(args, adopt_stored=True)
-    with TradingAgent(cfg) as agent:
+    with TradingAgent(cfg, record_config=False) as agent:
         print(json.dumps(agent.status(), indent=2, default=str))
     return 0
 
 
 def cmd_memory(args: argparse.Namespace) -> int:
     cfg = config_from_args(args, adopt_stored=True)
-    with TradingAgent(cfg) as agent:
+    with TradingAgent(cfg, record_config=False) as agent:
         cortex = agent.brain.b2
         if args.query:
             recalls = cortex.recall(args.query, k=args.k, kind=args.kind, reinforce=False)
@@ -307,7 +331,7 @@ def cmd_memory(args: argparse.Namespace) -> int:
 
 def cmd_report(args: argparse.Namespace) -> int:
     cfg = config_from_args(args, adopt_stored=True)
-    with TradingAgent(cfg) as agent:
+    with TradingAgent(cfg, record_config=False) as agent:
         b1 = agent.brain.b1
         stats = b1.trade_stats()
         print(f"trades {stats['trades']:.0f}  net PnL {stats['net_pnl']:+,.2f}  "
