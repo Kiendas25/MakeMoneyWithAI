@@ -3,7 +3,7 @@
 An autonomous crypto-only trading agent that runs unattended, remembers what it
 did, learns from it, and rewrites its own strategy over time.
 
-Three things make it more than a bot with indicators:
+What makes it more than a bot with indicators:
 
 | | |
 |---|---|
@@ -11,6 +11,7 @@ Three things make it more than a bot with indicators:
 | **Two brains** | **Brain 1** is exact and episodic (SQLite ledger of candles, decisions, fills, trades, genomes, equity). **Brain 2** is semantic and associative (vector memory of lessons, searched by meaning). Recall changes the next order's size — memory that cannot change behaviour is decoration. |
 | **Multi-market** | One process trades a whole universe of coins against a shared champion, a shared Brain 2 and portfolio-wide risk limits. Five markets mean five times the trades per hour, so it learns five times faster. |
 | **Self-evolving** | A genetic algorithm breeds strategy genomes against the agent's own recent history, selects in-sample, and promotes to champion **only on out-of-sample evidence**. Reflection over past trades biases which genes mutate, so the search is informed rather than blind. |
+| **Measured against doing nothing** | Fitness is judged against buy-and-hold, not just against zero. A high Sharpe that underperforms holding is a failure, and the agent now scores it as one. |
 
 Runs on the **standard library alone** — no numpy, no pandas, no framework.
 `ccxt` is optional and only needed for live orders or non-Binance data.
@@ -31,7 +32,7 @@ cd self_evolving_trader
 # 250 steps of the entire loop on deterministic synthetic data, no network
 python3 -m crypto_agent demo --steps 400 --fresh
 
-# the tests (71, stdlib unittest, ~9s)
+# the tests (188, stdlib unittest, ~90s)
 python3 -m pytest tests -q
 ```
 
@@ -304,7 +305,7 @@ crypto_agent/
   execution/
     broker.py           PaperBroker / CcxtBroker
     risk.py             limits, sizing, kill switch
-tests/                  71 tests, stdlib unittest (pytest-compatible)
+tests/                  188 tests, stdlib unittest (pytest-compatible)
 ```
 
 ## Prior art this builds on
@@ -332,13 +333,34 @@ The wheels that were not reinvented, and the ideas that were borrowed:
 - **[DEAP](https://github.com/DEAP/deap)** — standard GA vocabulary (tournament
   selection, elitism, uniform crossover, gaussian mutation).
 
+## What guards the results
+
+Four mechanisms exist specifically to stop the agent fooling itself, because a
+learning system with no such guards reliably learns to look good rather than to
+be good:
+
+- **Buy-and-hold benchmark.** Fitness blends risk-adjusted return with excess
+  return over holding. Beating a flat market by 2% is not the same achievement
+  as beating a market that doubled, and the score now knows the difference.
+- **Anchored walk-forward with trials deflation.** Hold-outs advance through
+  time rather than being one fixed tail re-selected against forever, and scores
+  shrink with how many evaluations the data has already seen. Searching harder
+  stops looking like finding something.
+- **Correlated-exposure cap.** Five majors are one bet wearing five names; the
+  cap measures the correlation and limits what one cluster can hold, which the
+  position count alone never did.
+- **Live-vs-backtest divergence.** The dashboard compares what the backtester
+  predicted with what the agent actually did, separating "the fill model was
+  optimistic" from "the agent chose differently" — the diagnostic that tells
+  you your assumptions are wrong before real money does.
+
 ## Honest limits
 
 - **Evolution can only search what the genome expresses.** It tunes and
   recombines five classic signal families; it will not invent a new one.
-- **A walk-forward hold-out reduces overfitting; it does not eliminate it.**
-  Re-running evolution repeatedly on overlapping history erodes the hold-out's
-  independence over time.
+- **Overfitting is reduced, not eliminated.** Anchored folds and trials
+  deflation slow the erosion of the hold-out; they do not repeal the fact that
+  a long enough search over a fixed history will eventually fit it.
 - **The synthetic provider is not a market.** It exists so the loop can be
   tested deterministically and offline. Any result produced against it says
   something about the *code*, nothing about the *strategy*.
@@ -348,5 +370,11 @@ The wheels that were not reinvented, and the ideas that were borrowed:
   against a real endpoint. Paper-trade them before trusting them.
 - **Slippage and fees are modelled, not measured.** Real fills on thin books,
   during volatility, will be worse than the constant-basis-point assumption.
+  The divergence report exists to catch exactly this, but it can only catch it
+  after the fact.
+- **No profitability claim of any kind is made or supported.** Everything above
+  concerns whether the machinery is sound. Whether the strategies it breeds make
+  money is unproven, and the offline market it was exercised against is not
+  evidence either way.
 - **Past performance, synthetic or historical, does not predict future
   returns.** Nothing here is financial advice.
