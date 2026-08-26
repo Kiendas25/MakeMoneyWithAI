@@ -12,7 +12,7 @@ import unittest
 
 from crypto_agent.agent import TradingAgent
 from crypto_agent.config import Config
-from crypto_agent.core.types import timeframe_ms
+from crypto_agent.core.types import Candle, timeframe_ms
 from crypto_agent.data.providers import SyntheticProvider
 
 STEP_MS = timeframe_ms("1h")
@@ -196,6 +196,74 @@ class TestStateAndStorage(unittest.TestCase):
                 "key-value state is growing with the number of bars processed")
         finally:
             agent.close()
+
+
+class CorrelatedProvider:
+    """Markets that move together, the way real majors do.
+
+    The synthetic provider seeds each symbol independently, so a correlation
+    cap can never bind against it — which means a replay on synthetic data
+    cannot prove the cap is wired correctly. This one drives every market from
+    one shared factor: four names, one bet.
+    """
+
+    name = "correlated"
+
+    def __init__(self, symbols, seed=1, bars=900, shared=0.95):
+        import math
+        import random
+
+        rng = random.Random(seed)
+        factor = [rng.gauss(0.0005, 0.02) for _ in range(bars)]
+        self.series = {}
+        for i, symbol in enumerate(symbols):
+            idiosyncratic = random.Random(seed + i + 1)
+            rows, price, ts = [], 100.0 * (i + 1), 0
+            for r in factor:
+                ret = shared * r + (1.0 - shared) * idiosyncratic.gauss(0.0, 0.02)
+                open_price = price
+                price *= math.exp(ret)
+                rows.append(Candle(ts, open_price, max(open_price, price) * 1.001,
+                                   min(open_price, price) * 0.999, price, 10.0))
+                ts += STEP_MS
+            self.series[symbol] = rows
+
+    def fetch_ohlcv(self, symbol, timeframe, limit):
+        return self.series.get(symbol, [])[-limit:]
+
+
+class TestCorrelatedExposureCapBinds(unittest.TestCase):
+    """The cluster cap must actually hold in the live loop, not just in a unit
+    test of the risk manager. A units mismatch between what the agent passes
+    and what the risk manager expects would disable it silently, and on
+    independent synthetic markets nothing would ever reveal that."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cap = 0.4
+        cfg = make_config(
+            self.tmp.name, symbols="ETH/USDT,XRP/USDT,BNB/USDT",
+            max_open_positions=5, max_correlated_exposure_pct=self.cap, seed=6)
+        self.symbols = cfg.symbol_list
+        self.agent = TradingAgent(cfg, provider=CorrelatedProvider(self.symbols))
+
+    def tearDown(self):
+        self.agent.close()
+        self.tmp.cleanup()
+
+    def test_exposure_to_one_cluster_stays_under_the_cap(self):
+        refusals, peak = 0, 0.0
+        for n in range(200):
+            cycle = self.agent.cycle(now_ms=(400 + n) * STEP_MS)
+            prices = {r.symbol: r.price for r in cycle.results if r.price}
+            refusals += sum(1 for r in cycle.results if "cluster" in r.reason)
+            if prices:
+                equity = self.agent.broker.equity(prices)
+                held = sum(self.agent._notional_held(prices).values())  # noqa: SLF001
+                if equity > 0:
+                    peak = max(peak, held / equity)
+        self.assertGreater(refusals, 0, "the cluster cap never fired on correlated markets")
+        self.assertLessEqual(peak, self.cap + 0.02, f"cluster exposure reached {peak:.0%}")
 
 
 if __name__ == "__main__":
