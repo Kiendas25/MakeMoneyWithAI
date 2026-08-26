@@ -14,20 +14,25 @@ from __future__ import annotations
 
 import html
 import json
+import statistics
 import time
 from dataclasses import dataclass
 from string import Template
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .analysis import divergence
+from .analysis.divergence import DivergenceReport
 from .brain.memory import DualBrain
 from .config import Config
 from .core.types import Candle
+from .strategy.backtest import buy_and_hold
 from .strategy.genome import Genome
 
 PALETTE = {
     "up": "#12a150",
     "down": "#e5484d",
     "accent": "#4c7fff",
+    "benchmark": "#f5a524",
     "muted": "#8b93a7",
 }
 
@@ -76,25 +81,62 @@ def _empty_chart(box: Box, message: str) -> str:
     )
 
 
+def _resample(values: Sequence[float], n: int) -> List[float]:
+    """Linearly resample ``values`` to exactly ``n`` points, spaced by
+    fractional position through the series.
+
+    Used to overlay two series of different lengths (equity marks recorded
+    once per processed bar versus a benchmark built from raw candles) on one
+    chart without pretending their timestamps line up bar-for-bar - it is an
+    approximation of the shape, not a claim that point ``i`` of one is point
+    ``i`` of the other.
+    """
+    if not values:
+        return []
+    if n <= 1 or len(values) == 1:
+        return [values[-1]] * max(1, n)
+    last = len(values) - 1
+    out = []
+    for i in range(n):
+        pos = i / (n - 1) * last
+        lo = int(pos)
+        hi = min(lo + 1, last)
+        frac = pos - lo
+        out.append(values[lo] * (1 - frac) + values[hi] * frac)
+    return out
+
+
 def line_chart(values: Sequence[float], box: Optional[Box] = None,
-               baseline: Optional[float] = None, label: str = "") -> str:
-    """Equity-curve style area chart with a reference line."""
+               baseline: Optional[float] = None, label: str = "",
+               compare: Optional[Sequence[float]] = None,
+               compare_label: str = "benchmark") -> str:
+    """Equity-curve style area chart with a reference line, and an optional
+    second series (``compare``) overlaid as a plain line - used for the
+    buy-and-hold benchmark against realised equity."""
     box = box or Box()
     if len(values) < 2:
         return _empty_chart(box, "not enough history yet")
 
+    compare_pts = _resample(compare, len(values)) if compare else []
+
     lo, hi = min(values), max(values)
     if baseline is not None:
         lo, hi = min(lo, baseline), max(hi, baseline)
+    if compare_pts:
+        lo, hi = min(lo, min(compare_pts)), max(hi, max(compare_pts))
     span = (hi - lo) or max(1e-9, abs(hi) * 0.01)
     lo, hi = lo - span * 0.08, hi + span * 0.08
 
     step = box.inner_w / (len(values) - 1)
-    points = [
-        (box.pad_left + i * step,
-         box.pad_top + box.inner_h - _scale(v, lo, hi, 0.0, box.inner_h))
-        for i, v in enumerate(values)
-    ]
+
+    def to_points(series: Sequence[float]) -> List[Tuple[float, float]]:
+        return [
+            (box.pad_left + i * step,
+             box.pad_top + box.inner_h - _scale(v, lo, hi, 0.0, box.inner_h))
+            for i, v in enumerate(series)
+        ]
+
+    points = to_points(values)
     path = " ".join(f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(points))
     area = (
         f"M{points[0][0]:.1f},{box.pad_top + box.inner_h:.1f} "
@@ -111,6 +153,15 @@ def line_chart(values: Sequence[float], box: Optional[Box] = None,
         f'<path d="{path}" fill="none" stroke="{color}" stroke-width="2" '
         f'stroke-linejoin="round" stroke-linecap="round"/>',
     ]
+    if compare_pts:
+        compare_path = " ".join(
+            f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(to_points(compare_pts))
+        )
+        parts.append(
+            f'<path d="{compare_path}" fill="none" stroke="{PALETTE["benchmark"]}" '
+            f'stroke-width="1.5" stroke-dasharray="6 4" '
+            f'aria-label="{html.escape(compare_label)}"/>'
+        )
     if baseline is not None:
         y = box.pad_top + box.inner_h - _scale(baseline, lo, hi, 0.0, box.inner_h)
         parts.append(
@@ -260,6 +311,127 @@ def _market_charts(by_symbol, prices, trades) -> str:
     return "".join(cards)
 
 
+def _bh_curve(candles: Sequence[Candle], cfg: Config) -> List[float]:
+    """One unit of starting capital, priced the same way
+    ``strategy.backtest.buy_and_hold`` prices its headline return.
+
+    Duplicated here (rather than reused) because ``buy_and_hold`` returns
+    summary metrics, not the path, and the chart needs the path.
+    """
+    if len(candles) < 2 or candles[0].close <= 0:
+        return []
+    fee_rate = cfg.fee_bps / 10_000.0
+    entry = candles[0].close
+    basis = 1.0 - fee_rate  # one unit of capital, entry fee taken off the top
+    return [basis * c.close / entry for c in candles[1:]]
+
+
+def _equity_benchmark(
+    b1, cfg: Config, universe: Sequence[str], equity_rows: Sequence[Dict[str, float]]
+) -> Tuple[Optional[List[float]], Optional[float]]:
+    """An equal-cash-weight buy-and-hold curve and total return over the same
+    window as ``equity_rows`` - "would just holding the universe have done
+    as well" - so the equity chart can answer that at a glance.
+
+    Splitting the starting cash evenly across ``universe`` and holding each
+    market means the pooled total return is exactly the mean of each
+    market's own buy-and-hold return (a total return is scale-free, so the
+    split cancels out), which is what's reported as the numeric excess
+    return regardless of whether a chart-worthy curve can be built.
+    Returns ``(None, None)`` when there is not enough shared history to
+    compute even that, so the caller can fall back to plotting the equity
+    curve alone rather than a misleading partial benchmark.
+    """
+    if len(equity_rows) < 2:
+        return None, None
+    start_ts, end_ts = int(equity_rows[0]["ts"]), int(equity_rows[-1]["ts"])
+    returns: List[float] = []
+    normalized_curves: List[List[float]] = []
+    for symbol in universe:
+        candles = [
+            c for c in b1.load_candles(symbol, cfg.timeframe, 5000)
+            if start_ts <= c.ts <= end_ts
+        ]
+        if len(candles) < 2 or candles[0].close <= 0:
+            continue
+        returns.append(buy_and_hold(candles, cfg).total_return)
+        curve = _bh_curve(candles, cfg)
+        if curve:
+            normalized_curves.append(curve)
+    if not returns:
+        return None, None
+    benchmark_return = statistics.fmean(returns)
+    if not normalized_curves:
+        return None, benchmark_return
+    aligned = [_resample(curve, len(equity_rows)) for curve in normalized_curves]
+    pooled_curve = [cfg.start_cash * statistics.fmean(point) for point in zip(*aligned)]
+    return pooled_curve, benchmark_return
+
+
+def _bps(value: Optional[float]) -> str:
+    return f"{value:+.1f} bps" if value is not None else "n/a"
+
+
+def _divergence_card(report: Optional[DivergenceReport]) -> str:
+    """Live-vs-backtest divergence for the champion genome, from
+    ``analysis.divergence.measure_divergence`` - or an empty state when there
+    is nothing yet to compare."""
+    if report is None or report.champion_id is None:
+        message = report.verdict if report is not None else "divergence could not be computed"
+        return (
+            '<section class="card full"><h2>Live vs backtest divergence</h2>'
+            f'<p class="empty">{html.escape(message)}</p></section>'
+        )
+
+    pooled = report.pooled
+    stats_html = "".join([
+        _stat("Champion trades", f"{pooled.realised_trades}"),
+        _stat("Modelled trades", f"{pooled.modelled_trades}"),
+        _stat("Matched fills", f"{pooled.matched_entries}"),
+        _stat("Memory vetoes", f"{pooled.memory_declined}"),
+        _stat("Risk vetoes", f"{pooled.risk_declined}"),
+        _stat("Unexplained", f"{pooled.unexplained_backtest_only + pooled.unexplained_live_only}"),
+        _stat("Entry slippage", _bps(pooled.mean_entry_slippage_bps)),
+        _stat("Exit slippage", _bps(pooled.mean_exit_slippage_bps)),
+    ])
+    rows = [
+        [
+            html.escape(symbol),
+            f"{d.realised_trades}",
+            f"{d.modelled_trades}",
+            f"{d.matched_entries}",
+            f"{d.memory_declined}",
+            f"{d.risk_declined}",
+            f"{d.unexplained_backtest_only + d.unexplained_live_only}",
+            _bps(d.mean_entry_slippage_bps),
+            html.escape(d.note) if d.note else "",
+        ]
+        for symbol, d in sorted(report.per_symbol.items())
+    ]
+    window_html = ""
+    if report.window:
+        window_html = (
+            f'<p class="muted">window {html.escape(_ts(report.window[0]))} to '
+            f'{html.escape(_ts(report.window[1]))} UTC</p>'
+        )
+    caveats_html = "".join(f"<li>{html.escape(c)}</li>" for c in report.caveats)
+    table_html = _table(
+        ["symbol", "live", "modelled", "matched", "memory veto", "risk veto",
+         "unexplained", "entry slippage", "note"],
+        rows, "no per-symbol data yet",
+    )
+    return (
+        '<section class="card full"><h2>Live vs backtest divergence</h2>'
+        f'<p class="genome">{html.escape(report.verdict)}</p>'
+        f"{window_html}"
+        f'<div class="stats">{stats_html}</div>'
+        f"{table_html}"
+        '<details class="muted"><summary>what this cannot tell you</summary>'
+        f"<ul>{caveats_html}</ul></details>"
+        "</section>"
+    )
+
+
 def _pct(value: float) -> str:
     tone = "pos" if value > 0 else "neg" if value < 0 else ""
     return f'<span class="{tone}">{value * 100:+.2f}%</span>'
@@ -295,6 +467,18 @@ def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
     peak = float(risk.get("peak_equity") or current_equity)
     drawdown = (peak - current_equity) / peak if peak > 0 else 0.0
 
+    benchmark_curve, benchmark_return = _equity_benchmark(b1, cfg, universe, equity_rows)
+    excess_return = (pnl_pct - benchmark_return) if benchmark_return is not None else None
+
+    # A diagnostic must never be the reason the dashboard itself fails to
+    # render - if the divergence check blows up, show that it couldn't run
+    # rather than losing the whole page.
+    try:
+        divergence_report = divergence.measure_divergence(brain, cfg, symbols=universe)
+    except Exception as exc:  # noqa: BLE001 - deliberately broad, see above
+        divergence_report = None
+        b1.log_event("divergence_error", str(exc), level="WARNING")
+
     halted = bool(risk.get("halted"))
     cached = sum(len(rows) for rows in by_symbol.values())
     status_line = (
@@ -306,6 +490,12 @@ def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
     stats_html = "".join([
         _stat("Equity", f"{current_equity:,.2f}"),
         _stat("Return", f"{pnl_pct * 100:+.2f}%", "pos" if pnl_pct > 0 else "neg" if pnl_pct else ""),
+        _stat(
+            "vs buy & hold",
+            f"{excess_return * 100:+.2f}%" if excess_return is not None else "n/a",
+            ("pos" if excess_return > 0 else "neg" if excess_return < 0 else "")
+            if excess_return is not None else "",
+        ),
         _stat("Markets", f"{len(by_symbol)}/{len(universe)}"),
         _stat("Open positions", f"{len(positions)}"),
         _stat("Drawdown", f"{drawdown * 100:.2f}%", "neg" if drawdown > 0.05 else ""),
@@ -394,10 +584,18 @@ def render(brain: DualBrain, cfg: Config, refresh_seconds: int = 0,
         generated=_ts(int(time.time() * 1000)),
         stats=stats_html,
         position=pos_html,
-        equity_chart=line_chart(equity, Box(height=220.0), baseline=cfg.start_cash, label="equity"),
+        equity_chart=line_chart(
+            equity, Box(height=220.0), baseline=cfg.start_cash, label="equity",
+            compare=benchmark_curve, compare_label="buy & hold",
+        ),
+        benchmark_legend=(
+            '<span class="benchmark-swatch"></span><span>dashed amber = equal-weight buy &amp; hold</span>'
+            if benchmark_curve else ""
+        ),
         price_charts=_market_charts(by_symbol, prices, trades),
         fitness_chart=fitness_chart(generations),
         champion=champion_html,
+        divergence=_divergence_card(divergence_report),
         trades=_table(
             ["closed", "side", "pnl %", "pnl", "regime", "exit", "entry reason"],
             trade_rows, "no closed trades yet"),
@@ -480,7 +678,12 @@ $refresh
   .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
          border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px;
-            color: var(--muted); margin-top: 10px; }
+            color: var(--muted); margin-top: 10px; align-items: center; }
+  .benchmark-swatch { display: inline-block; width: 14px; height: 2px;
+                       background: repeating-linear-gradient(90deg, #f5a524 0 6px, transparent 6px 10px); }
+  details.muted { margin-top: 10px; font-size: 12px; }
+  details.muted summary { cursor: pointer; }
+  details.muted ul { margin: 6px 0 0; padding-left: 18px; }
   footer { margin-top: 20px; color: var(--muted); font-size: 12px; }
 </style>
 </head>
@@ -501,7 +704,7 @@ $refresh
     <section class="card full">
       <h2>Equity curve</h2>
       $equity_chart
-      <div class="legend"><span>dashed line = starting capital</span></div>
+      <div class="legend"><span>dashed grey line = starting capital</span>$benchmark_legend</div>
     </section>
 
     $price_charts
@@ -519,6 +722,8 @@ $refresh
       <p class="muted">$memory_summary</p>
       $memories
     </section>
+
+    $divergence
 
     <section class="card full">
       <h2>Closed trades</h2>
