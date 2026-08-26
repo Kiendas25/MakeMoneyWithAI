@@ -334,7 +334,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
     cfg = config_from_args(args, adopt_stored=True)
     if args.serve:
-        dashboard_module.serve(cfg, args.host, args.port, args.refresh)
+        dashboard_module.serve(cfg, args.host, args.port, args.refresh,
+                               open_browser=args.open_browser)
         return 0
     with DualBrain(cfg) as brain:
         path = dashboard_module.write(brain, cfg, args.output, args.refresh)

@@ -529,13 +529,16 @@ def write(brain: DualBrain, cfg: Config, path: str, refresh_seconds: int = 0) ->
     return str(target)
 
 
-def serve(cfg: Config, host: str, port: int, refresh_seconds: int) -> None:
+def serve(cfg: Config, host: str, port: int, refresh_seconds: int,
+          open_browser: bool = False) -> None:
     """Serve a freshly rendered dashboard on every request.
 
     Re-reading the brains per request means the page always reflects the running
     agent, and the two processes never share anything but SQLite.
     """
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+    import webbrowser
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802 - stdlib naming
@@ -554,11 +557,34 @@ def serve(cfg: Config, host: str, port: int, refresh_seconds: int) -> None:
         def log_message(self, *args):  # keep the console for the agent's own output
             pass
 
-    server = HTTPServer((host, port), Handler)
-    print(f"dashboard on http://{host}:{port}/  (Ctrl-C to stop)")
+    server = _bind(ThreadingHTTPServer, host, port, Handler)
+    actual_port = server.server_address[1]
+    url = f"http://{host}:{actual_port}/"
+    print(f"dashboard on {url}  (Ctrl-C to stop)")
+    if open_browser:
+        # The server has to be accepting connections before the browser asks.
+        threading.Timer(0.4, webbrowser.open, [url]).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
     finally:
         server.server_close()
+
+
+def _bind(server_cls, host: str, port: int, handler):
+    """Bind the requested port, or fall back to any free one.
+
+    Windows reserves whole TCP port ranges for Hyper-V, WSL and Docker, and
+    binding inside one fails with WinError 10013 (a PermissionError) even though
+    nothing is listening there. Refusing to start over that would be unhelpful
+    when the OS is perfectly willing to hand out a different port.
+    """
+    try:
+        return server_cls((host, port), handler)
+    except (PermissionError, OSError) as exc:
+        if port == 0:
+            raise
+        print(f"port {port} is not available ({exc.__class__.__name__}: {exc}); "
+              "asking the OS for a free port instead")
+        return server_cls((host, 0), handler)

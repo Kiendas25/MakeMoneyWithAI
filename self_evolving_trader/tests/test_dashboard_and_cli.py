@@ -173,5 +173,83 @@ class TestStoredConfigAdoption(unittest.TestCase):
         self.assertIsInstance(json.dumps(stored_config(self.tmp.name)), str)
 
 
+class TestServerBinding(unittest.TestCase):
+    """Windows reserves port ranges; a busy or forbidden port must not be fatal."""
+
+    def test_falls_back_to_a_free_port(self):
+        import socket
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from crypto_agent.dashboard import _bind
+
+        blocker = socket.socket()
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", 0))
+        taken = blocker.getsockname()[1]
+        blocker.listen(1)
+        try:
+            class Refuses(ThreadingHTTPServer):
+                def server_bind(self):
+                    if self.server_address[1] == taken:
+                        raise PermissionError("[WinError 10013] simulated reservation")
+                    super().server_bind()
+
+            server = _bind(Refuses, "127.0.0.1", taken, BaseHTTPRequestHandler)
+            try:
+                self.assertNotEqual(server.server_address[1], taken)
+                self.assertGreater(server.server_address[1], 0)
+            finally:
+                server.server_close()
+        finally:
+            blocker.close()
+
+    def test_an_explicit_zero_port_propagates_real_failures(self):
+        from crypto_agent.dashboard import _bind
+
+        def always_fails(address, handler):
+            raise PermissionError("no sockets for you")
+
+        with self.assertRaises(PermissionError):
+            _bind(always_fails, "127.0.0.1", 0, None)
+
+    def test_serve_renders_a_real_request(self):
+        import threading
+        import urllib.error
+        import urllib.request
+
+        from crypto_agent import dashboard as dash
+        from crypto_agent.brain.memory import DualBrain
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Config(data_dir=tmp)
+            DualBrain(cfg).close()
+            holder = {}
+            original = dash._bind
+
+            def capture(cls, host, port, handler):
+                holder["server"] = original(cls, host, 0, handler)
+                return holder["server"]
+
+            dash._bind = capture
+            thread = threading.Thread(
+                target=dash.serve, args=(cfg, "127.0.0.1", 0, 0), daemon=True)
+            thread.start()
+            try:
+                for _ in range(100):
+                    if "server" in holder:
+                        break
+                    __import__("time").sleep(0.02)
+                port = holder["server"].server_address[1]
+                body = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5).read()
+                self.assertIn(b"<!doctype html>", body)
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(f"http://127.0.0.1:{port}/nope", timeout=5)
+                self.assertEqual(caught.exception.code, 404)
+            finally:
+                dash._bind = original
+                holder["server"].shutdown()
+                holder["server"].server_close()
+
+
 if __name__ == "__main__":
     unittest.main()

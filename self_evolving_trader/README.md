@@ -210,6 +210,11 @@ python3 -m crypto_agent dashboard --serve --open        # live, re-renders per r
 python3 -m crypto_agent dashboard -o report.html        # or write a single file
 ```
 
+If the chosen port is unavailable the server takes any free one and prints the
+real URL — Windows reserves whole TCP ranges for Hyper-V, WSL and Docker, and
+binding inside one fails with `WinError 10013` even when nothing is listening
+there (`netsh interface ipv4 show excludedportrange protocol=tcp` lists them).
+
 Equity curve, price candles with entry/exit markers, best-vs-mean fitness per
 generation, the champion's genes, Brain 2's lessons, the trade blotter, recent
 decisions and the event log — one self-contained HTML file with inline SVG
