@@ -45,6 +45,9 @@ class Config:
     max_drawdown_pct: float = 0.20  # kill switch, persisted across restarts
     max_trades_per_day: int = 12
     max_open_positions: int = 3  # across the whole universe
+    max_correlated_exposure_pct: float = 0.5  # cap on notional in one correlated cluster
+    correlation_window: int = 200  # bars of returns used to measure correlation
+    correlation_threshold: float = 0.7  # above this, two markets count as one bet
     cooldown_bars_after_loss: int = 2
     min_notional: float = 10.0
     allow_short: bool = False  # spot-style default; genomes may still want it
@@ -59,6 +62,9 @@ class Config:
     generations_per_cycle: int = 2
     oos_bars: int = 400  # walk-forward hold-out at the tail of history
     promotion_margin: float = 0.05  # champion must be beaten by this much
+    benchmark_weight: float = 0.6  # how much fitness is judged against buy-and-hold
+    walk_forward_folds: int = 3  # rolling fit/hold-out splits per evaluation
+    trials_penalty: bool = True  # deflate fitness by how often the data was reused
     min_trades_for_promotion: int = 3
 
     # --- memory ---
@@ -167,6 +173,14 @@ class Config:
             raise ValueError("start_cash must be positive")
         if self.history_bars <= self.oos_bars + 100:
             raise ValueError("history_bars must exceed oos_bars by at least 100")
+        if not 0 < self.max_correlated_exposure_pct <= 1.0:
+            raise ValueError("max_correlated_exposure_pct must be in (0, 1]")
+        if not 0 <= self.correlation_threshold <= 1.0:
+            raise ValueError("correlation_threshold must be in [0, 1]")
+        if self.walk_forward_folds < 1:
+            raise ValueError("walk_forward_folds must be at least 1")
+        if not 0 <= self.benchmark_weight <= 1.0:
+            raise ValueError("benchmark_weight must be in [0, 1]")
         if self.max_open_positions < 1:
             raise ValueError("max_open_positions must be at least 1")
         for name in self.symbol_list:
