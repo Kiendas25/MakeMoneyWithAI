@@ -150,6 +150,11 @@ class BacktestMetrics:
     avg_trade_pct: float = 0.0
     exposure: float = 0.0
     final_equity: float = 0.0
+    # What the same window returned to a trader who just bought and held, and
+    # how far this result landed from that - the question the Sharpe ratio
+    # never asks on its own.
+    benchmark_return: float = 0.0
+    excess_return: float = 0.0
 
     def to_dict(self) -> Dict[str, float]:
         return asdict(self)
@@ -166,13 +171,21 @@ class BacktestResult:
         return fitness_score(self.metrics)
 
 
-def fitness_score(m: BacktestMetrics, min_trades: int = 3) -> float:
+def fitness_score(m: BacktestMetrics, min_trades: int = 3, benchmark_weight: float = 0.6) -> float:
     """Risk-adjusted score used as the GA's selection pressure.
 
     Sharpe is the backbone; drawdown is punished multiplicatively so a strategy
     cannot buy its way to a high score with a single lucky, deep-underwater run.
     Strategies that barely trade are pushed down: a two-trade sample proves
     nothing and would otherwise dominate the population by luck.
+
+    A high Sharpe is worthless if a trader would have done better sitting on
+    their hands, so ``benchmark_weight`` blends the risk-adjusted read with
+    how the strategy did against buy-and-hold on the same window
+    (``m.excess_return``). Both halves are squashed into (-1, 1) with tanh
+    before blending, so a strategy that clearly beat holding cannot be
+    out-argued by a rival with a merely better Sharpe: the excess-return gap
+    only needs to be a few tens of a percent wide to dominate the blend.
     """
     if m.trades < min_trades:
         # Still ordered by return so the population can climb out of "never trades".
@@ -185,7 +198,12 @@ def fitness_score(m: BacktestMetrics, min_trades: int = 3) -> float:
     # zero by sample size stops the population from converging on whichever
     # genome got the best small-sample draw.
     sample_confidence = m.trades / (m.trades + 10.0)
-    return (base * dd_penalty * sample_confidence + 0.5 * math.tanh(m.total_return)) / churn_penalty
+    risk_adjusted = base * dd_penalty * sample_confidence + 0.5 * math.tanh(m.total_return)
+    risk_component = math.tanh(risk_adjusted)
+    benchmark_component = math.tanh(3.0 * m.excess_return)
+    weight = max(0.0, min(1.0, benchmark_weight))
+    blended = (1.0 - weight) * risk_component + weight * benchmark_component
+    return blended / churn_penalty
 
 
 @dataclass

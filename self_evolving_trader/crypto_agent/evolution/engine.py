@@ -19,6 +19,7 @@ Brain 1, so evolution resumes exactly where it left off after a restart.
 from __future__ import annotations
 
 import logging
+import math
 import random
 import statistics
 from dataclasses import dataclass, field
@@ -44,6 +45,22 @@ def _as_markets(history: History, primary: str) -> Dict[str, Sequence[Candle]]:
 
 POPULATION_KEY = "evolution.population"
 BEST_FITNESS_KEY = "evolution.best_fitness"
+TRIALS_KEY = "evolution.trials_seen"
+
+
+def _deflation_penalty(trials: int) -> float:
+    """How much to subtract from fitness for having already looked at this
+    data ``trials`` times.
+
+    Modelled loosely on the deflated Sharpe ratio: the expected best-of-many
+    for a batch of noisy trials grows with how many trials there were, so a
+    champion picked after hundreds of generations of implicit search against
+    the same walk-forward windows needs to be judged more skeptically than
+    one picked after a handful. Growth is logarithmic so the first few dozen
+    generations barely matter but a long-running search is meaningfully
+    discounted, without ever driving the score to nonsense.
+    """
+    return 0.05 * math.log1p(max(0, trials))
 
 
 @dataclass
@@ -56,6 +73,8 @@ class Evaluation:
     per_symbol: Dict[str, Dict[str, float]] = field(default_factory=dict)
     pooled_oos_trades: int = 0
     worst_oos_drawdown: float = 0.0
+    trials: int = 0
+    deflation_penalty: float = 0.0
 
     @property
     def metrics(self) -> Dict[str, Any]:
@@ -64,6 +83,8 @@ class Evaluation:
             "out_sample": self.out_sample.metrics.to_dict(),
             "per_symbol": self.per_symbol,
             "pooled_oos_trades": self.pooled_oos_trades,
+            "trials": self.trials,
+            "deflation_penalty": self.deflation_penalty,
         }
 
 
@@ -138,13 +159,25 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
     # Evaluation
     # ------------------------------------------------------------------
-    def evaluate(self, genome: Genome, history: "History") -> Evaluation:
+    def _trials_seen(self) -> int:
+        return int(self.brain.b1.get_state(TRIALS_KEY, 0) or 0)
+
+    def evaluate(self, genome: Genome, history: "History", trials: Optional[int] = None) -> Evaluation:
         """Score a genome across the whole universe.
 
         A strategy that only works on one coin has probably fitted that coin's
         noise, so fitness is the mean across markets while the trade count and
         drawdown that gate promotion are pooled - five markets also mean five
-        times the evidence per generation.
+        times the evidence per generation. Each market's walk-forward is a
+        multi-fold pass (see ``walk_forward``), and both halves are scored
+        with the benchmark-aware ``fitness_score`` so a strategy that merely
+        rode a rally scores no better than one that actually beat it.
+
+        ``trials`` lets the caller pin how many prior looks at this data to
+        deflate against; when omitted it reads the running count that
+        ``run_generation`` maintains in Brain 1, so an ad-hoc call (a test, a
+        CLI backtest) is not silently deflated by unrelated evolution runs
+        that happened before it.
         """
         markets = _as_markets(history, self.cfg.symbol)
         per_symbol: Dict[str, Dict[str, float]] = {}
@@ -154,29 +187,40 @@ class EvolutionEngine:
         pooled_oos_trades = 0
         worst_oos_dd = 0.0
         for symbol, candles in markets.items():
-            in_sample, out_sample = walk_forward(genome, candles, self.cfg)
-            in_score = fitness_score(in_sample.metrics)
-            oos_score = fitness_score(out_sample.metrics)
+            wf = walk_forward(genome, candles, self.cfg)
+            in_score = fitness_score(wf.in_sample.metrics, benchmark_weight=self.cfg.benchmark_weight)
+            oos_score = fitness_score(wf.out_sample.metrics, benchmark_weight=self.cfg.benchmark_weight)
             in_scores.append(in_score)
             oos_scores.append(oos_score)
-            pooled_oos_trades += out_sample.metrics.trades
-            worst_oos_dd = max(worst_oos_dd, out_sample.metrics.max_drawdown)
-            per_symbol[symbol] = {"in_sample": in_score, "out_of_sample": oos_score,
-                                  "trades": out_sample.metrics.trades}
+            pooled_oos_trades += wf.out_sample.metrics.trades
+            worst_oos_dd = max(worst_oos_dd, wf.out_sample.metrics.max_drawdown)
+            per_symbol[symbol] = {
+                "in_sample": in_score,
+                "out_of_sample": oos_score,
+                "trades": wf.out_sample.metrics.trades,
+                "excess_return": wf.out_sample.metrics.excess_return,
+            }
             if first_in is None:
-                first_in, first_oos = in_sample, out_sample
+                first_in, first_oos = wf.in_sample, wf.out_sample
         if first_in is None:  # no usable market data at all
             empty = BacktestResult(BacktestMetrics(final_equity=self.cfg.start_cash))
             first_in = first_oos = empty
+
+        trials_seen = self._trials_seen() if trials is None else int(trials)
+        penalty = _deflation_penalty(trials_seen) if self.cfg.trials_penalty else 0.0
+        fitness = (statistics.fmean(in_scores) if in_scores else -1.0) - penalty
+        oos_fitness = (statistics.fmean(oos_scores) if oos_scores else -1.0) - penalty
         return Evaluation(
             genome=genome,
-            fitness=statistics.fmean(in_scores) if in_scores else -1.0,
-            oos_fitness=statistics.fmean(oos_scores) if oos_scores else -1.0,
+            fitness=fitness,
+            oos_fitness=oos_fitness,
             in_sample=first_in,
             out_sample=first_oos,
             per_symbol=per_symbol,
             pooled_oos_trades=pooled_oos_trades,
             worst_oos_drawdown=worst_oos_dd,
+            trials=trials_seen,
+            deflation_penalty=penalty,
         )
 
     def gene_nudges(self) -> Dict[str, float]:
@@ -201,11 +245,19 @@ class EvolutionEngine:
         generation = self.brain.b1.last_generation() + 1
         nudges = self.gene_nudges()
 
+        # One snapshot of the trials counter for the whole population, so
+        # every genome in this generation is deflated by the same amount -
+        # otherwise whichever genome happened to be evaluated last would look
+        # arbitrarily worse purely from evaluation order, not from anything
+        # about the strategy. The counter itself only advances once the
+        # generation is done, marking this batch as one more look at the data.
+        trials = self._trials_seen()
         evaluations = sorted(
-            (self.evaluate(g, history) for g in population),
+            (self.evaluate(g, history, trials=trials) for g in population),
             key=lambda e: e.fitness,
             reverse=True,
         )
+        self.brain.b1.set_state(TRIALS_KEY, trials + 1)
         for ev in evaluations:
             self.brain.b1.save_genome(
                 ev.genome.id,

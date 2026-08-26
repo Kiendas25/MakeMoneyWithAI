@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 from ..config import Config
@@ -176,14 +177,45 @@ def simulate(
         )
         equity_curve[-1] = cash
 
+    # Every result is measured against the trivial "just buy it" strategy on
+    # the same window, so a genome that only out-trades a falling market still
+    # reads as the failure it is.
+    benchmark_return = buy_and_hold(candles, cfg).total_return
     metrics = compute_metrics(
         equity_curve,
         trades,
         cfg.timeframe,
         start_equity=float(start_cash if start_cash is not None else cfg.start_cash),
         exposure=bars_in_market / max(1, len(equity_curve)),
+        benchmark_return=benchmark_return,
     )
     return BacktestResult(metrics=metrics, equity_curve=equity_curve, trades=trades)
+
+
+def buy_and_hold(candles: Sequence[Candle], cfg: Config) -> BacktestMetrics:
+    """The trivial "buy once and do nothing" strategy, priced the same way
+    ``simulate`` prices everything else, so the two are directly comparable.
+
+    Only the entry pays a fee. An investor who buys once and never trades
+    again never re-crosses the spread a second time, and charging an exit fee
+    here would understate what plain holding actually returns relative to a
+    strategy that pays fees on every round trip.
+    """
+    start_cash = float(cfg.start_cash)
+    if len(candles) < 2 or candles[0].close <= 0:
+        return BacktestMetrics(final_equity=start_cash)
+    fee_rate = cfg.fee_bps / 10_000.0
+    entry_price = candles[0].close
+    fee = start_cash * fee_rate
+    qty = (start_cash - fee) / entry_price
+    equity_curve = [qty * c.close for c in candles[1:]]
+    return compute_metrics(
+        equity_curve,
+        trades=[],
+        timeframe=cfg.timeframe,
+        start_equity=start_cash,
+        exposure=1.0,
+    )
 
 
 def compute_metrics(
@@ -192,9 +224,10 @@ def compute_metrics(
     timeframe: str,
     start_equity: float,
     exposure: float,
+    benchmark_return: float = 0.0,
 ) -> BacktestMetrics:
     if not equity_curve:
-        return BacktestMetrics(final_equity=start_equity)
+        return BacktestMetrics(final_equity=start_equity, benchmark_return=benchmark_return)
 
     final = equity_curve[-1]
     total_return = final / start_equity - 1.0 if start_equity else 0.0
@@ -234,26 +267,138 @@ def compute_metrics(
         avg_trade_pct=statistics.fmean([t.pnl_pct for t in trades]) if trades else 0.0,
         exposure=exposure,
         final_equity=final,
+        benchmark_return=benchmark_return,
+        excess_return=total_return - benchmark_return,
     )
 
 
-def walk_forward(
-    genome: Genome, candles: Sequence[Candle], cfg: Config
-) -> Tuple[BacktestResult, BacktestResult]:
-    """Fit-window and hold-out results.
+@dataclass
+class Fold:
+    """One anchored walk-forward split: everything up to a point to fit on,
+    and the untouched bars right after it to test on.
 
-    The GA selects on the in-sample score but promotes on the out-of-sample one.
-    Overfitting is the default outcome of any search over strategy parameters;
-    the hold-out is the only thing standing between the agent and a champion
-    that has memorised noise.
+    ``fit_range``/``hold_range`` are half-open ``(start, end)`` indices into
+    the original candle sequence, kept around so callers (and tests) can
+    confirm the folds actually advance through time instead of re-testing the
+    same window.
     """
-    # A fixed bar count would leave a short history with no fit window at all,
-    # so the hold-out is the smaller of the configured size and a third of what
-    # is available.
-    hold_out = min(cfg.oos_bars, max(150, int(len(candles) * 0.35)))
-    split = max(0, len(candles) - hold_out)
-    in_sample = candles[:split] if split > 100 else candles
-    out_sample = candles[split:] if split > 100 else candles[-hold_out:]
-    is_result = simulate(genome, in_sample, cfg)
-    oos_result = simulate(genome, out_sample, cfg)
-    return is_result, oos_result
+
+    fit: BacktestResult
+    hold_out: BacktestResult
+    fit_range: Tuple[int, int]
+    hold_range: Tuple[int, int]
+
+
+@dataclass
+class WalkForwardResult:
+    """Aggregate in-sample and out-of-sample results, plus the fold-by-fold
+    detail they were pooled from.
+
+    Unpacks as a 2-tuple of ``(in_sample, out_sample)`` so callers that only
+    want the headline BacktestResults - as the previous, single-split
+    ``walk_forward`` returned - keep working unchanged.
+    """
+
+    in_sample: BacktestResult
+    out_sample: BacktestResult
+    folds: List[Fold] = field(default_factory=list)
+
+    def __iter__(self):
+        return iter((self.in_sample, self.out_sample))
+
+
+def _aggregate_metrics(results: Sequence[BacktestResult]) -> BacktestMetrics:
+    """Pool several fold results into one summary metric set.
+
+    Trade counts sum outright - more folds is strictly more evidence. Return,
+    Sharpe, Sortino and exposure are weighted by how many bars each fold
+    actually ran over, so a fold that barely produced any bars cannot outvote
+    one built on ten times the data. Drawdown takes the worst fold rather than
+    an average, because a strategy that blew up in any one window is not made
+    safe by having behaved in the others.
+    """
+    metrics = [r.metrics for r in results]
+    weights = [max(1, len(r.equity_curve)) for r in results]
+    total_weight = float(sum(weights))
+
+    def wmean(getter) -> float:
+        return sum(getter(m) * w for m, w in zip(metrics, weights)) / total_weight
+
+    total_trades = sum(m.trades for m in metrics)
+    total_wins = sum(round(m.win_rate * m.trades) for m in metrics)
+    all_pnls = [t.pnl_pct for r in results for t in r.trades]
+    return BacktestMetrics(
+        total_return=wmean(lambda m: m.total_return),
+        sharpe=wmean(lambda m: m.sharpe),
+        sortino=wmean(lambda m: m.sortino),
+        max_drawdown=max((m.max_drawdown for m in metrics), default=0.0),
+        win_rate=(total_wins / total_trades) if total_trades else 0.0,
+        trades=total_trades,
+        avg_trade_pct=statistics.fmean(all_pnls) if all_pnls else 0.0,
+        exposure=wmean(lambda m: m.exposure),
+        final_equity=wmean(lambda m: m.final_equity),
+        benchmark_return=wmean(lambda m: m.benchmark_return),
+        excess_return=wmean(lambda m: m.excess_return),
+    )
+
+
+def walk_forward(genome: Genome, candles: Sequence[Candle], cfg: Config) -> WalkForwardResult:
+    """Anchored, multi-fold walk-forward evaluation.
+
+    A single fixed hold-out at the tail of history gets implicitly selected on
+    every time evolution calls this against it; after hundreds of generations
+    it has been used to pick a winner about as many times as the fit window
+    has, and stops being out-of-sample in any meaningful sense. Splitting into
+    ``cfg.walk_forward_folds`` successive folds - each fitting on everything
+    seen so far and testing on the untouched bars right after - means
+    different generations, and different points in evolution, land on
+    different hold-out windows, so no single stretch of history quietly
+    becomes part of the training signal.
+    """
+    n = len(candles)
+    folds_n = max(1, cfg.walk_forward_folds)
+    min_fit = 100  # simulate() itself refuses fewer than 60 bars; leave headroom
+
+    def _single_fold() -> WalkForwardResult:
+        # Not enough history for an honest fit/hold-out split at all: fall
+        # back to evaluating on everything, same as having no hold-out.
+        only = simulate(genome, candles, cfg)
+        return WalkForwardResult(
+            in_sample=only, out_sample=only, folds=[Fold(only, only, (0, n), (0, n))]
+        )
+
+    if n <= min_fit + 50:
+        return _single_fold()
+
+    remaining = n - min_fit
+    hold_size = max(50, remaining // folds_n)
+    hold_size = min(hold_size, cfg.oos_bars)
+
+    folds: List[Fold] = []
+    fit_end = min_fit
+    while fit_end < n and len(folds) < folds_n:
+        hold_start = fit_end
+        hold_end = min(n, hold_start + hold_size)
+        if hold_end - hold_start < 30:
+            break
+        fit_slice = candles[:fit_end]
+        hold_slice = candles[hold_start:hold_end]
+        fit_result = simulate(genome, fit_slice, cfg)
+        hold_result = simulate(genome, hold_slice, cfg)
+        folds.append(Fold(fit_result, hold_result, (0, fit_end), (hold_start, hold_end)))
+        fit_end = hold_end  # anchor: next fold's fit window absorbs this hold-out
+
+    if not folds:  # pragma: no cover - guarded by the length check above
+        return _single_fold()
+
+    in_sample = BacktestResult(
+        metrics=_aggregate_metrics([f.fit for f in folds]),
+        equity_curve=folds[-1].fit.equity_curve,
+        trades=[t for f in folds for t in f.fit.trades],
+    )
+    out_sample = BacktestResult(
+        metrics=_aggregate_metrics([f.hold_out for f in folds]),
+        equity_curve=folds[-1].hold_out.equity_curve,
+        trades=[t for f in folds for t in f.hold_out.trades],
+    )
+    return WalkForwardResult(in_sample=in_sample, out_sample=out_sample, folds=folds)
