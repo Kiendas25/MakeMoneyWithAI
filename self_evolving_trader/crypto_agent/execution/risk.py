@@ -12,14 +12,16 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..config import Config
-from ..core.types import Signal, Trade, timeframe_ms
+from ..core.types import Candle, Signal, Trade, timeframe_ms
 from ..brain.hippocampus import Hippocampus
+from ..data.correlation import Correlation, cluster_symbols
 from ..strategy.backtest import position_size
 
 RISK_STATE_KEY = "risk.state"
+CORRELATION_CACHE_PREFIX = "risk.correlation"
 
 
 @dataclass
@@ -107,7 +109,18 @@ class RiskManager:
         now_ms: Optional[int] = None,
         symbol: Optional[str] = None,
         open_positions: int = 0,
+        price_history: Optional[Dict[str, Sequence[Candle]]] = None,
+        holdings: Optional[Dict[str, float]] = None,
     ) -> RiskDecision:
+        """Approve or refuse a new entry, sizing it within every active limit.
+
+        ``price_history`` and ``holdings`` are optional and only needed to
+        judge correlated-cluster exposure: a map of symbol -> recent candles
+        (enough to measure correlation, typically ``cfg.correlation_window``
+        bars) and a map of symbol -> notional currently held. Callers that
+        omit them get every other check unchanged and simply skip the
+        correlation check, since there is nothing to measure it from.
+        """
         now = now_ms if now_ms is not None else int(time.time() * 1000)
         self._roll_day(equity, now)
         market = symbol or self.cfg.symbol
@@ -142,7 +155,104 @@ class RiskManager:
             return RiskDecision(False, 0.0, "size below minimum notional")
         if qty * price > equity * self.cfg.max_position_pct * 1.0001:
             qty = equity * self.cfg.max_position_pct / price
+
+        if price_history:
+            refusal = self._correlated_exposure_reason(
+                market, qty * price, equity, price_history, holdings or {}
+            )
+            if refusal:
+                return RiskDecision(False, 0.0, refusal)
+
         return RiskDecision(True, qty, "within risk limits")
+
+    # ------------------------------------------------------------------
+    def _correlated_exposure_reason(
+        self,
+        market: str,
+        new_notional: float,
+        equity: float,
+        price_history: Dict[str, Sequence[Candle]],
+        holdings: Dict[str, float],
+    ) -> Optional[str]:
+        """None if the new position is fine; otherwise the refusal reason.
+
+        A new entry is refused - rather than resized - when it would push the
+        total notional held across one correlated cluster over
+        ``cfg.max_correlated_exposure_pct`` of equity. Refusing (like the
+        other entries in this method) keeps the risk manager's contract
+        simple: every veto here is a flat no, so a caller never has to guess
+        whether a returned size was silently shrunk for a reason it did not
+        ask about.
+        """
+        if market not in price_history or equity <= 0:
+            return None  # nothing to measure the requested market's cluster from
+
+        clusters, pairs = self._correlation_clusters(price_history)
+        cluster = next((c for c in clusters if market in c), [market])
+        if len(cluster) <= 1:
+            return None  # not correlated enough with anything else to matter
+
+        cluster_set = set(cluster)
+        held = sum(v for s, v in holdings.items() if s in cluster_set and s != market)
+        total = held + new_notional
+        cap = equity * self.cfg.max_correlated_exposure_pct
+        if total <= cap * 1.0001:
+            return None
+
+        partner, value = _strongest_partner(market, cluster_set, pairs, self.cfg.correlation_threshold)
+        if value is None:
+            # A connected cluster of size > 1 always has at least one edge
+            # touching `market`, but refusing on a cluster we cannot name a
+            # reason for would produce an unreadable lesson - so stand down.
+            return None
+
+        pct = total / equity * 100.0
+        cap_pct = self.cfg.max_correlated_exposure_pct * 100.0
+        return (
+            f"would hold {pct:.0f}% of equity in one cluster "
+            f"({market}, {partner} correlated {value:.2f}, cap {cap_pct:.0f}%)"
+        )
+
+    def _correlation_clusters(
+        self, price_history: Dict[str, Sequence[Candle]]
+    ) -> Tuple[List[List[str]], Dict[Tuple[str, str], Correlation]]:
+        """Cluster the given symbols by correlation, cached per bar in Brain 1.
+
+        Five 200-bar Pearson correlations recomputed in pure Python on every
+        single decision is wasted work when the candles behind them have not
+        changed since the last closed bar. The cache key covers which symbols
+        were measured and the most recent bar timestamp among them, so a new
+        bar - or a different universe - invalidates it automatically without
+        needing an explicit eviction.
+        """
+        symbols = sorted(price_history)
+        bar_ts = max((series[-1].ts for series in price_history.values() if series), default=0)
+        # One key per symbol set, with the bar stamped inside it. Putting the
+        # timestamp in the key instead would leave a dead kv row behind on
+        # every single bar, forever.
+        cache_key = f"{CORRELATION_CACHE_PREFIX}.{'|'.join(symbols)}"
+
+        cached = self.brain.get_state(cache_key)
+        if cached is not None and cached.get("bar_ts") != bar_ts:
+            cached = None  # stale: recompute for this bar
+        if cached is not None:
+            clusters = cached["clusters"]
+            pairs = {
+                tuple(key.split("|")): Correlation(row["value"], row["n"], row["reason"])
+                for key, row in cached["pairs"].items()
+            }
+            return clusters, pairs
+
+        clusters, pairs = cluster_symbols(price_history, self.cfg.correlation_threshold)
+        self.brain.set_state(cache_key, {
+            "bar_ts": bar_ts,
+            "clusters": clusters,
+            "pairs": {
+                f"{a}|{b}": {"value": r.value, "n": r.n, "reason": r.reason}
+                for (a, b), r in pairs.items()
+            },
+        })
+        return clusters, pairs
 
     # ------------------------------------------------------------------
     def _cooldowns(self) -> Dict[str, int]:
@@ -184,3 +294,33 @@ def _utc_day(now_ms: Optional[int] = None) -> str:
     if now_ms is None:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _strongest_partner(
+    market: str,
+    cluster: set,
+    pairs: Dict[Tuple[str, str], Correlation],
+    threshold: float,
+) -> Tuple[Optional[str], Optional[float]]:
+    """The cluster member `market` is most directly correlated with.
+
+    A symbol only joins a cluster of size > 1 via an edge that touches it
+    (connected components cannot add a node any other way), so this is
+    guaranteed to find a partner for any `market` that is genuinely in a
+    multi-symbol cluster - it exists to pick the most legible one to quote
+    back to the operator when several qualify.
+    """
+    best_partner: Optional[str] = None
+    best_value: Optional[float] = None
+    for (a, b), corr in pairs.items():
+        if not corr.known or corr.value < threshold:
+            continue
+        if a == market and b in cluster:
+            other = b
+        elif b == market and a in cluster:
+            other = a
+        else:
+            continue
+        if best_value is None or corr.value > best_value:
+            best_partner, best_value = other, corr.value
+    return best_partner, best_value

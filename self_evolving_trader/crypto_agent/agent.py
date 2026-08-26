@@ -224,7 +224,8 @@ class TradingAgent:
             else:
                 open_count = len(self.brain.b1.load_positions())
                 results.append(self._consider_entry(
-                    symbol, genome, frame, i, signal, equity, open_count))
+                    symbol, genome, frame, i, signal, equity, open_count,
+                    history=history, prices=prices))
 
         cycle = CycleResult(newest_ts, self.broker.equity(prices), results)
         cycle.lessons = self._maybe_maintenance(steps, history, cycle)
@@ -296,7 +297,9 @@ class TradingAgent:
     # ------------------------------------------------------------------
     def _consider_entry(
         self, symbol: str, genome: Genome, frame: rules.Frame, i: int,
-        signal: Signal, equity: float, open_positions: int = 0
+        signal: Signal, equity: float, open_positions: int = 0,
+        history: Optional[Dict[str, List[Candle]]] = None,
+        prices: Optional[Dict[str, float]] = None,
     ) -> StepResult:
         candle = frame.candles[i]
         if signal.direction == 0:
@@ -331,6 +334,12 @@ class TradingAgent:
             now_ms=candle.ts,
             symbol=symbol,
             open_positions=open_positions,
+            # Five majors move together, so three "diversified" positions can be
+            # one leveraged bet on crypto beta. The risk manager needs the price
+            # history to see that, and the notional held to know how far in it
+            # already is.
+            price_history=history,
+            holdings=self._notional_held(prices or {}),
         )
         if not decision.approved:
             self.brain.b1.record_decision(
@@ -432,6 +441,13 @@ class TradingAgent:
             self.brain.b1.log_event("stop", f"agent stopped after {len(cycles)} cycles")
             _release_lock(lock)
         return cycles
+
+    def _notional_held(self, prices: Dict[str, float]) -> Dict[str, float]:
+        """Current exposure per market, in quote currency."""
+        return {
+            symbol: abs(position.qty) * prices.get(symbol, position.entry_price)
+            for symbol, position in self.brain.b1.load_positions().items()
+        }
 
     def _reconcile_book(self) -> None:
         """Trust the exchange over our own records before trading anything.
