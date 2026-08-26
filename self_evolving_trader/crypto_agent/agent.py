@@ -400,6 +400,7 @@ class TradingAgent:
             f"via {getattr(self.provider, 'name', 'provider')}",
             {"config": self.cfg.to_dict()},
         )
+        self._reconcile_book()
         cycles: List[CycleResult] = []
         failures = 0
         try:
@@ -431,6 +432,23 @@ class TradingAgent:
             self.brain.b1.log_event("stop", f"agent stopped after {len(cycles)} cycles")
             _release_lock(lock)
         return cycles
+
+    def _reconcile_book(self) -> None:
+        """Trust the exchange over our own records before trading anything.
+
+        A process that died mid-order, or a partial fill, leaves the local book
+        disagreeing with reality - and every risk limit downstream is computed
+        from that book. Checking once at startup is cheap; discovering the drift
+        through a rejected order is not.
+        """
+        try:
+            report = self.broker.reconcile()
+        except Exception as exc:  # never let a bookkeeping check stop the agent
+            log.warning("could not reconcile the book: %s", exc)
+            self.brain.b1.log_event("reconcile_error", str(exc), level="WARNING")
+            return
+        if getattr(report, "corrected", None):
+            log.warning("book corrected against the exchange: %s", report.corrected)
 
     def _sleep(self, seconds: float) -> None:
         deadline = time.time() + seconds
