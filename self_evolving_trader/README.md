@@ -32,7 +32,7 @@ cd self_evolving_trader
 # 250 steps of the entire loop on deterministic synthetic data, no network
 python3 -m crypto_agent demo --steps 400 --fresh
 
-# the tests (228, stdlib unittest, ~75s)
+# the tests (230, stdlib unittest, ~100s)
 python3 -m pytest tests -q
 ```
 
@@ -277,10 +277,13 @@ Two properties make it safe to keep in a synced folder:
 
 - **Idempotent.** Re-exporting unchanged data rewrites nothing — no mtime
   churn, no sync noise.
-- **Your text survives.** Generated content lives between
-  `<!-- agent:begin generated -->` and `<!-- agent:end generated -->`; anything
-  you write outside those markers is copied through untouched. A note *you*
-  created (no markers at all) is appended to, never overwritten.
+- **Your text survives.** Everything down to `<!-- agent:end generated -->` is
+  the agent's; everything below it is yours, copied through untouched. A note
+  *you* created (no marker at all) keeps its content — the generated block goes
+  in above it, never over it.
+
+Notes open with YAML frontmatter on line 1, so Obsidian picks up `symbol`,
+`win_rate`, `kind` and the rest as real properties you can sort and filter by.
 
 SQLite stays the single source of truth. The export only ever writes markdown,
 so a hand-edited or corrupted vault cannot feed bad state back into the agent —
@@ -334,7 +337,7 @@ crypto_agent/
   execution/
     broker.py           PaperBroker / CcxtBroker
     risk.py             limits, sizing, kill switch
-tests/                  228 tests, stdlib unittest (pytest-compatible)
+tests/                  230 tests, stdlib unittest (pytest-compatible)
 ```
 
 ## Working on the code with an AI assistant

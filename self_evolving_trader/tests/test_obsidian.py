@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from crypto_agent.brain.memory import DualBrain
-from crypto_agent.brain.obsidian import BEGIN, END, export_vault, safe_name, unique_name
+from crypto_agent.brain.obsidian import END, export_vault, safe_name, unique_name
 from crypto_agent.config import Config
 from crypto_agent.core.types import Lesson, Trade
 
@@ -101,6 +101,32 @@ class TestExportVault(unittest.TestCase):
         self.assertIn("[[lessons/", text)
         self.assertNotIn("Nothing in Brain 2", text)
 
+    def test_frontmatter_is_the_first_line_so_obsidian_parses_it(self):
+        # Obsidian only reads YAML properties when --- opens the file. A
+        # leading HTML comment would silently cost every note its frontmatter.
+        with DualBrain(self.cfg) as brain:
+            self._seed(brain)
+            export_vault(brain, self.cfg, self.vault)
+        for note in sorted(self.vault.rglob("*.md")):
+            with self.subTest(note=note.name):
+                self.assertTrue(
+                    note.read_text(encoding="utf-8").startswith("---\n"),
+                    f"{note} does not open with frontmatter",
+                )
+
+    def test_lessons_are_linked_by_the_symbol_in_their_text(self):
+        # Consolidation writes the symbol into the prose, not into meta.
+        with DualBrain(self.cfg) as brain:
+            brain.b1.record_trade(make_trade())
+            brain.b2.remember(Lesson(
+                text="long BTC/USDT in regime 'range_low_vol' -> win 6.46%",
+                kind="trade", weight=2.0, meta={"genome_id": "abc123"},
+            ))
+            export_vault(brain, self.cfg, self.vault)
+        text = (self.vault / "markets" / "BTC-USDT.md").read_text(encoding="utf-8")
+        self.assertIn("[[lessons/", text)
+        self.assertNotIn("Nothing in Brain 2", text)
+
     def test_second_export_writes_nothing(self):
         with DualBrain(self.cfg) as brain:
             self._seed(brain)
@@ -124,7 +150,6 @@ class TestExportVault(unittest.TestCase):
 
         text = note.read_text(encoding="utf-8")
         self.assertIn("I disagree: too big.", text)
-        self.assertEqual(text.count(BEGIN), 1)
         self.assertEqual(text.count(END), 1)
         self.assertGreaterEqual(report.preserved, 1)
 
@@ -139,7 +164,8 @@ class TestExportVault(unittest.TestCase):
 
         text = note.read_text(encoding="utf-8")
         self.assertIn("Hand written, do not delete.", text)
-        self.assertIn(BEGIN, text)
+        self.assertIn(END, text)
+        self.assertLess(text.index(END), text.index("Hand written"))
         self.assertEqual(report.appended, 1)
 
     def test_empty_brains_still_produce_a_valid_vault(self):

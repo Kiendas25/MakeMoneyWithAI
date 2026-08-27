@@ -12,16 +12,20 @@ disagreement *next to* the agent's conclusion.
 
 Two properties make that annotation safe:
 
-* **Idempotent.** Every note carries a generated region between
-  ``<!-- agent:begin generated -->`` and ``<!-- agent:end generated -->``.
-  Re-exporting unchanged data produces byte-identical regions, and the file is
-  then left untouched rather than rewritten - so file mtimes, and Obsidian's
-  own sync, stay quiet when nothing happened.
-* **Human text survives.** Anything outside those markers is copied through
-  verbatim. A file that has no markers at all was written by a person, not by
-  us: the generated block is *appended* to it rather than replacing anything,
-  because silently overwriting someone's note is the one unrecoverable mistake
-  an exporter can make.
+* **Idempotent.** Everything from the start of the file down to
+  ``<!-- agent:end generated -->`` is ours; everything after it is yours.
+  Re-exporting unchanged data produces a byte-identical region and the file is
+  then left untouched rather than rewritten, so mtimes - and Obsidian's own
+  sync - stay quiet when nothing happened.
+* **Human text survives.** Whatever follows the marker is copied through
+  verbatim. A file with no marker at all was written by a person, not by us,
+  so the generated block is *prepended* and their text kept below it: silently
+  overwriting someone's note is the one unrecoverable mistake an exporter can
+  make.
+
+The region starts at byte zero rather than at an opening marker because
+Obsidian only parses YAML frontmatter when the ``---`` is the very first line
+of the file. A leading ``<!-- ... -->`` would cost every note its properties.
 """
 
 from __future__ import annotations
@@ -36,8 +40,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from ..config import Config
 from ..core.types import Trade
 
-BEGIN = "<!-- agent:begin generated -->"
 END = "<!-- agent:end generated -->"
+SCAFFOLD = "\n## My notes\n\n"  # the empty invitation a fresh note ends with
 
 # Windows forbids these outright; the rest are reserved by Obsidian's own
 # link syntax or make shell quoting miserable.
@@ -141,38 +145,29 @@ def _frontmatter(fields: Dict[str, Any]) -> List[str]:
 
 
 # ----------------------------------------------------------------------
-def _split(existing: str) -> Optional[tuple]:
-    """Return (head, tail) around the generated region, or None if absent."""
-    start = existing.find(BEGIN)
-    if start < 0:
-        return None
-    end = existing.find(END, start)
-    if end < 0:
-        return None
-    return existing[:start], existing[end + len(END):]
-
-
 def _write_note(path: Path, body: str, report: ExportReport) -> None:
     """Write ``body`` into ``path``'s generated region, keeping human text.
 
-    Three cases, and the third is the one that matters: a file with no markers
-    was authored by a person, so the generated block is appended under its own
-    heading instead of replacing what they wrote.
+    Three cases, and the third is the one that matters: a file with no marker
+    was authored by a person, so the generated block goes in above what they
+    wrote instead of replacing it.
     """
-    block = f"{BEGIN}\n{body.rstrip()}\n{END}\n"
+    block = f"{body.rstrip()}\n{END}\n"
     existing = path.read_text(encoding="utf-8") if path.exists() else None
 
     if existing is None:
-        new = block + "\n## My notes\n\n"
+        new = block + SCAFFOLD
     else:
-        parts = _split(existing)
-        if parts is None:
-            new = existing.rstrip("\n") + "\n\n" + block
+        cut = existing.find(END)
+        if cut < 0:
+            new = block + "\n" + existing.lstrip("\n")
             report.appended += 1
         else:
-            head, tail = parts
-            new = head + block.rstrip("\n") + tail
-            if head.strip() or tail.strip():
+            tail = existing[cut + len(END):]
+            new = block.rstrip("\n") + tail
+            # The empty "## My notes" heading is ours, not theirs - counting it
+            # would report preserved notes on a vault nobody has written in.
+            if tail.strip() and tail.strip() != SCAFFOLD.strip():
                 report.preserved += 1
 
     report.paths.append(path)
@@ -188,14 +183,32 @@ def _write_note(path: Path, body: str, report: ExportReport) -> None:
 
 
 # ----------------------------------------------------------------------
-def _lesson_notes(brain: Any, vault: Path, report: ExportReport,
+def _lesson_symbol(recall: Any, meta: Dict[str, Any], known: Sequence[str]) -> str:
+    """Which market a lesson is about.
+
+    Consolidation writes the symbol into the lesson's prose ("long BTC/USDT in
+    regime ...") rather than into its metadata, so reading only ``meta`` would
+    leave every market note claiming Brain 2 had never heard of it.
+    """
+    tagged = str(meta.get("symbol") or "").strip().upper()
+    if tagged:
+        return tagged
+    text = recall.text.upper()
+    for name in known:
+        if name in text:
+            return name
+    return ""
+
+
+def _lesson_notes(brain: Any, known: Sequence[str], vault: Path,
+                  report: ExportReport,
                   by_symbol: Dict[str, List[str]]) -> List[str]:
     """One note per Brain 2 lesson; returns their vault-relative links."""
     links: List[str] = []
     taken: Dict[str, int] = {}
     for recall in brain.b2.latest(limit=500):
         meta = recall.meta if isinstance(recall.meta, dict) else {}
-        symbol = str(meta.get("symbol") or "")
+        symbol = _lesson_symbol(recall, meta, known)
         title = recall.text.strip().splitlines()[0] if recall.text.strip() else "lesson"
         stem = unique_name(f"{recall.id:05d} {title}", taken, fallback=f"lesson-{recall.id}")
         link = f"lessons/{stem}"
@@ -226,15 +239,21 @@ def _lesson_notes(brain: Any, vault: Path, report: ExportReport,
     return links
 
 
-def _market_notes(cfg: Config, trades: Sequence[Trade], positions: Dict[str, Any],
-                  vault: Path, report: ExportReport,
-                  by_symbol: Dict[str, List[str]]) -> List[str]:
+def _symbol_universe(cfg: Config, trades: Sequence[Trade],
+                     positions: Dict[str, Any]) -> List[str]:
+    """Every market worth a note: configured, traded, or currently held."""
     symbols: List[str] = list(cfg.symbol_list)
-    for source in (t.symbol for t in trades), positions.keys(), by_symbol.keys():
+    for source in (t.symbol for t in trades), positions.keys():
         for name in source:
+            name = str(name).strip().upper()
             if name and name not in symbols:
                 symbols.append(name)
+    return symbols
 
+
+def _market_notes(symbols: Sequence[str], trades: Sequence[Trade],
+                  positions: Dict[str, Any], vault: Path, report: ExportReport,
+                  by_symbol: Dict[str, List[str]]) -> List[str]:
     links: List[str] = []
     taken: Dict[str, int] = {}
     for symbol in symbols:
@@ -256,9 +275,11 @@ def _market_notes(cfg: Config, trades: Sequence[Trade], positions: Dict[str, Any
         lines += ["", f"# {symbol}", ""]
         if position is not None:
             side = "long" if getattr(position, "qty", 0) > 0 else "short"
+            stop = f"{position.stop:,.2f}" if position.stop else "none"
             lines += [
-                f"Open {side} {abs(position.qty):.6f} from {position.entry_price:.2f} "
-                f"({_ts(position.entry_ts)} UTC), stop {position.stop}.",
+                f"Open {side} {abs(position.qty):.6f} from "
+                f"{position.entry_price:,.2f} ({_ts(position.entry_ts)} UTC), "
+                f"stop {stop}.",
                 "",
             ]
         else:
@@ -370,9 +391,10 @@ def export_vault(brain: Any, cfg: Config, vault_dir: Path | str) -> ExportReport
     trades: List[Trade] = list(brain.b1.recent_trades(limit=2000))
     positions = brain.b1.load_positions()
 
+    symbols = _symbol_universe(cfg, trades, positions)
     by_symbol: Dict[str, List[str]] = {}
-    lesson_links = _lesson_notes(brain, vault, report, by_symbol)
-    market_links = _market_notes(cfg, trades, positions, vault, report, by_symbol)
+    lesson_links = _lesson_notes(brain, symbols, vault, report, by_symbol)
+    market_links = _market_notes(symbols, trades, positions, vault, report, by_symbol)
     trade_links = _trade_notes(trades, vault, report)
     _index_note(cfg, brain, trades, positions, lesson_links, market_links,
                 trade_links, vault, report)
