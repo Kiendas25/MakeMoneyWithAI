@@ -28,6 +28,7 @@ from .agent import TradingAgent
 from . import dashboard as dashboard_module
 from .config import Config, ENV_PREFIX
 from .core.types import fitness_score
+from .execution.risk import RISK_STATE_KEY
 from .strategy.backtest import simulate, walk_forward
 from .strategy.genome import Genome
 
@@ -36,6 +37,10 @@ from .strategy.genome import Genome
 #: universe, and check the pairs exist on your exchange (Coinbase, for one, has
 #: no BNB market).
 TOP5 = "BTC/USDT,ETH/USDT,XRP/USDT,BNB/USDT,SOL/USDT"
+#: Ten markets roughly double the setups per hour without touching the entry
+#: bar - the honest way to trade more often is more places to look, not a
+#: lower standard for what counts as a trade.
+TOP10 = TOP5 + ",DOGE/USDT,ADA/USDT,TRX/USDT,LINK/USDT,AVAX/USDT"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--symbols", help="comma-separated universe, e.g. 'BTC/USDT,ETH/USDT'")
     parser.add_argument("--top5", action="store_true",
                         help=f"trade the five largest coins: {TOP5}")
+    parser.add_argument("--top10", action="store_true",
+                        help="trade ten markets - about twice the setups per hour")
     parser.add_argument("--timeframe", help="1m 5m 15m 1h 4h 1d ...")
     parser.add_argument("--provider", choices=["synthetic", "binance", "ccxt"])
     parser.add_argument("--exchange", help="ccxt exchange id (with --provider ccxt)")
@@ -95,6 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--open", dest="open_browser", action="store_true",
                       help="open the result in your browser")
 
+    why = sub.add_parser("why", help="why the agent is (or is not) opening trades")
+    why.add_argument("-n", "--limit", type=int, default=2000,
+                     help="how many recent decisions to tally")
+
     vault = sub.add_parser("obsidian", help="export both brains into an Obsidian vault")
     vault.add_argument("--vault", default=None,
                        help="vault directory (default: <data-dir>/vault)")
@@ -115,7 +126,9 @@ def config_from_args(args: argparse.Namespace, adopt_stored: bool = False, **ext
     overrides: Dict[str, Any] = {
         "data_dir": args.data_dir,
         "symbol": args.symbol,
-        "symbols": TOP5 if getattr(args, "top5", False) else args.symbols,
+        "symbols": (TOP10 if getattr(args, "top10", False)
+                    else TOP5 if getattr(args, "top5", False)
+                    else args.symbols),
         "timeframe": args.timeframe,
         "provider": args.provider,
         "exchange": args.exchange,
@@ -172,6 +185,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "memory": cmd_memory,
         "report": cmd_report,
         "dashboard": cmd_dashboard,
+        "why": cmd_why,
         "obsidian": cmd_obsidian,
         "resume-risk": cmd_resume_risk,
     }[args.command]
@@ -371,6 +385,39 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     print(f"dashboard written to {path}")
     if args.open_browser:
         webbrowser.open(Path(path).as_uri())
+    return 0
+
+
+def cmd_why(args: argparse.Namespace) -> int:
+    """Answer 'it is running but nothing is happening' from the ledger."""
+    from .brain.memory import DualBrain
+    from .strategy import rules
+
+    cfg = config_from_args(args, adopt_stored=True)
+    with DualBrain(cfg) as brain:
+        buckets = brain.b1.decision_reasons(args.limit)
+        total = sum(b["count"] for b in buckets)
+        if not total:
+            print("no decisions recorded yet - the agent has not completed a bar")
+            return 0
+        opened = sum(b["executed"] for b in buckets)
+        print(f"{total} recent decisions, {opened} opened a position\n")
+        for b in buckets:
+            share = b["count"] / total * 100
+            print(f"  {b['count']:>6}  {share:5.1f}%  {b['reason']}")
+            if b["reason"] != b["example"]:
+                print(f"          e.g. {b['example'][:96]}")
+        floor = rules.min_edge_for(cfg)
+        print(f"\ncost floor: a target must clear {floor * 100:.2f}% "
+              f"({cfg.min_edge_multiple:.2f}x the {rules.round_trip_cost(cfg.fee_bps, cfg.slippage_bps) * 100:.2f}% "
+              f"round trip)")
+        risk_state = brain.b1.get_state(RISK_STATE_KEY) or {}
+        if risk_state.get("halted"):
+            print("risk: HALTED - run `resume-risk` to clear it")
+        print(f"today: {int(risk_state.get('trades_today', 0))} of "
+              f"{cfg.max_trades_per_day} trades used, "
+              f"{cfg.max_open_positions} concurrent positions allowed "
+              f"across {len(cfg.symbol_list)} markets")
     return 0
 
 

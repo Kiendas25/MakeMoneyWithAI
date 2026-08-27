@@ -32,7 +32,7 @@ cd self_evolving_trader
 # 250 steps of the entire loop on deterministic synthetic data, no network
 python3 -m crypto_agent demo --steps 400 --fresh
 
-# the tests (243, stdlib unittest, ~100s)
+# the tests (261, stdlib unittest, ~100s)
 python3 -m pytest tests -q
 ```
 
@@ -124,6 +124,7 @@ comma-separated list.
 
 ```bash
 python3 -m crypto_agent --provider binance --top5 --timeframe 5m run
+python3 -m crypto_agent --provider binance --top10 --timeframe 5m run   # ~2x the setups
 python3 -m crypto_agent --provider binance --symbols "BTC/USDT,ETH/USDT,LINK/USDT" run
 ```
 
@@ -224,6 +225,59 @@ allowed to notice which market it is in, and that the trades which cannot pay
 for themselves stop happening. Fewer trades but informative ones beats 82
 trades whose only lesson is "everything loses".
 
+## Why is it not trading?
+
+```bash
+python3 -m crypto_agent why
+```
+
+```
+1840 recent decisions, 6 opened a position
+
+    1502   81.6%  score below the entry threshold
+            e.g. stand aside score +0.16 vs 0.18, led by trend (+0.87)
+     220   12.0%  already in a position, holding
+      74    4.0%  target below the cost floor
+            e.g. target 0.21% below the 0.45% cost floor
+      38    2.1%  risk limits blocked the entry (see `report` for which)
+       6    0.3%  opened a position
+
+cost floor: a target must clear 0.45% (1.50x the 0.30% round trip)
+today: 6 of 40 trades used, 5 concurrent positions allowed across 5 markets
+```
+
+Every decision already recorded its action and its reason, so "it is running
+but nothing is happening" was always answerable from the ledger — it just had
+to be asked. The categories are bucketed by *action* first, because a held
+position and an opened one carry the same `long score …` text and only the
+action separates them.
+
+**Trading more often is a matter of more places to look, not a lower bar.**
+`--top10` doubles the universe, which roughly doubles the setups per hour
+without weakening a single gate. The daily and concurrency caps default to 40
+and 5 — sized so that with a five-coin universe they act as a safety net rather
+than as the thing deciding how fast the agent learns.
+
+## Promotion has to survive the hold-out
+
+A real run produced generation 14 at **+2.305 in-sample and −2.158
+out-of-sample**, and generation 16 at **+0.501 against −1.828**. The two were
+not merely uncorrelated — they pulled in opposite directions, which is what
+memorising the fit window looks like — and a champion was crowned anyway.
+
+Two gates now stand in the way, on top of the walk-forward and trials
+deflation that were already there:
+
+- **`min_generalisation`** (0.25) — when a genome's in-sample fitness is
+  positive, the hold-out must retain at least a quarter of it. Nothing is asked
+  of a genome that scores negative in-sample or *better* out-of-sample than in:
+  neither is the failure mode being caught.
+- **`min_trades_for_promotion`** (3 → 8) — three hold-out trades is not
+  evidence of anything. A genome can win three coin flips.
+
+Selective, not deadlocked: a 500-step demo still promoted two champions across
+40 generations.
+
 ## Autonomy and safety
 
 The risk manager is the constitution evolution cannot mutate. All of its state
@@ -267,6 +321,7 @@ python3 -m crypto_agent evolve -g 5                # run generations now
 python3 -m crypto_agent status                     # full state as JSON
 python3 -m crypto_agent memory -q "downtrend high vol long"
 python3 -m crypto_agent report                     # trades, evolution, events
+python3 -m crypto_agent why                        # why it is (not) opening trades
 python3 -m crypto_agent obsidian                   # export both brains to an Obsidian vault
 python3 -m crypto_agent resume-risk                # clear a drawdown halt
 ```
@@ -376,7 +431,7 @@ crypto_agent/
   execution/
     broker.py           PaperBroker / CcxtBroker
     risk.py             limits, sizing, kill switch
-tests/                  243 tests, stdlib unittest (pytest-compatible)
+tests/                  261 tests, stdlib unittest (pytest-compatible)
 ```
 
 ## Working on the code with an AI assistant

@@ -49,8 +49,12 @@ class Config:
     max_position_pct: float = 0.35  # notional cap as a fraction of equity
     max_daily_loss_pct: float = 0.04
     max_drawdown_pct: float = 0.20  # kill switch, persisted across restarts
-    max_trades_per_day: int = 12
-    max_open_positions: int = 3  # across the whole universe
+    # Both caps are global, not per market, so a five-coin universe shares
+    # them. Sized for that: one concurrent position per market, and enough
+    # daily trades that the cap is a safety net rather than the thing
+    # deciding how fast the agent learns.
+    max_trades_per_day: int = 40
+    max_open_positions: int = 5  # across the whole universe
     max_correlated_exposure_pct: float = 0.5  # cap on notional in one correlated cluster
     correlation_window: int = 200  # bars of returns used to measure correlation
     correlation_threshold: float = 0.7  # above this, two markets count as one bet
@@ -75,7 +79,14 @@ class Config:
     benchmark_weight: float = 0.6  # how much fitness is judged against buy-and-hold
     walk_forward_folds: int = 3  # rolling fit/hold-out splits per evaluation
     trials_penalty: bool = True  # deflate fitness by how often the data was reused
-    min_trades_for_promotion: int = 3
+    # Three hold-out trades is not evidence of anything; a genome can win three
+    # coin flips. This is the number of pooled out-of-sample trades a challenger
+    # must have produced before its score is allowed to mean something.
+    min_trades_for_promotion: int = 8
+    # A genome that scores well in-sample and collapses out-of-sample fitted the
+    # noise. When its in-sample fitness is positive it must retain at least this
+    # fraction of it out-of-sample to be promotable.
+    min_generalisation: float = 0.25
 
     # --- memory ---
     consolidate_every_steps: int = 12

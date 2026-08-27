@@ -1,40 +1,40 @@
 # Graph Report - self_evolving_trader  (2026-08-27)
 
 ## Corpus Check
-- 50 files · ~48,779 words
+- 52 files · ~50,716 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1131 nodes · 2678 edges · 67 communities (56 shown, 11 thin omitted)
-- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 170 edges (avg confidence: 0.94)
+- 1174 nodes · 2788 edges · 71 communities (58 shown, 13 thin omitted)
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 176 edges (avg confidence: 0.94)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `e5d9f782`
+- Built from commit: `d476c7f4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - dashboard.py
-- test_correlation.py
+- _candles_from_returns
 - PaperBroker
 - EvolutionEngine
-- test_risk_and_agent.py
-- genome_with
+- reflect.py
+- test_regime_and_costs.py
 - indicators.py
 - Hippocampus
-- Position
-- TestCharts
+- TestTrailingStopLookahead
+- TestDashboardPage
 - backtest.py
 - Signal
-- DivergenceTestCase
-- agent.py
+- test_divergence.py
+- types.py
 - cli.py
 - TradingAgent
 - DualBrain
 - .make_broker
 - cortex.py
-- types.py
+- Broker
 - CcxtBroker
 - RiskManager
 - make_agent
@@ -44,48 +44,52 @@
 - Self-Evolving Crypto Trading Agent
 - obsidian.py
 - TestRiskManager
-- test_live_safety.py
+- test_promotion_gate.py
 - Lesson
-- .random
-- _pid_alive
-- test_memory.py
-- Config
 - Genome
+- _pid_alive
+- HashingEmbedder
+- Config
+- min_edge_for
 - Candle
-- test_walkforward.py
+- BacktestMetrics
 - TestAgentEndToEnd
-- TestAgentUniverse
+- TestDecisionReasons
 - Correlation
-- FakeExchange
+- ReconcileReport
 - SyntheticProvider
-- TestMultiSymbolReconcileKeepsEveryHolding
-- test_dashboard_and_cli.py
-- Frame
-- TestFillDivergence
-- .load
-- Any
+- _decision_bucket
+- TestStoredConfigAdoption
+- simulate
+- TestCashIsNeverOverdrawn
+- Position
+- TestBacktest
 - TestDashboardIntegration
 - TestIndicators
-- TestDashboardPage
+- TestCorrelationWindow
 - safe_name
 - self-evolving-crypto-agent
 - TestCheckEntryCorrelationCap
 - MemoryBias
-- Recall
-- .remember
+- TestMultiAssetBook
+- TestResumeRebaselinesWatermarks
 - Trade
-- providers.py
-- TestEquityAcceptsThePriceMapAgentActuallyPasses
-- TestKillSwitchDoesNotTrapPositions
+- .__init__
+- TestBackwardCompatibility
+- Embedder
+- TestCorrelatedExposureCapBinds
+- _row_to_trade
+- .distance
+- .__init__
 
 ## God Nodes (most connected - your core abstractions)
-1. `Config` - 145 edges
-2. `DualBrain` - 98 edges
+1. `Config` - 148 edges
+2. `DualBrain` - 102 edges
 3. `Candle` - 73 edges
-4. `Genome` - 57 edges
-5. `TradingAgent` - 55 edges
-6. `Signal` - 55 edges
-7. `Hippocampus` - 46 edges
+4. `Genome` - 59 edges
+5. `Signal` - 57 edges
+6. `TradingAgent` - 55 edges
+7. `Hippocampus` - 50 edges
 8. `Trade` - 39 edges
 9. `RiskManager` - 39 edges
 10. `Lesson` - 34 edges
@@ -93,195 +97,207 @@
 ## Surprising Connections (you probably didn't know these)
 - `Coerce strings coming from env/JSON into the dataclass field type.` --rationale_for--> `_coerce()`  [EXTRACTED]
   crypto_agent/config.py → self_evolving_trader/crypto_agent/config.py
+- `warmup_bars()` --uses--> `Genome`  [INFERRED]
+  self_evolving_trader/crypto_agent/strategy/rules.py → self_evolving_trader/crypto_agent/strategy/genome.py
 - `Start from a few hand-written archetypes, then fill with randoms. Pure random…` --rationale_for--> `seed_population()`  [EXTRACTED]
   crypto_agent/strategy/genome.py → self_evolving_trader/crypto_agent/strategy/genome.py
 - `A coarse, human-readable label. Brain 2 groups its lessons by this, so it has…` --rationale_for--> `regime_at()`  [EXTRACTED]
   crypto_agent/strategy/rules.py → self_evolving_trader/crypto_agent/strategy/rules.py
 - `Each module votes in [-1, 1]. Positive means "be long".` --rationale_for--> `module_scores()`  [EXTRACTED]
   crypto_agent/strategy/rules.py → self_evolving_trader/crypto_agent/strategy/rules.py
-- `Ratchet the stop toward price using bar ``i``'s close; never loosen it. The…` --rationale_for--> `update_trailing_stop()`  [EXTRACTED]
-  crypto_agent/strategy/rules.py → self_evolving_trader/crypto_agent/strategy/rules.py
 
 ## Import Cycles
 - None detected.
 
-## Communities (67 total, 11 thin omitted)
+## Communities (71 total, 13 thin omitted)
 
 ### Community 0 - "dashboard.py"
 Cohesion: 0.06
-Nodes (51): _compare_symbol(), DivergenceReport, FillComparison, _mean_bps(), measure_divergence(), _pool(), The full comparison: one :class:`SymbolDivergence` per market, the pooled total…, Re-simulate the current champion over the window it actually traded and compare… (+43 more)
+Nodes (52): _compare_symbol(), DivergenceReport, FillComparison, _mean_bps(), measure_divergence(), _pool(), Live-vs-backtest divergence for the champion genome. Nothing else in the agent…, The full comparison: one :class:`SymbolDivergence` per market, the pooled total… (+44 more)
 
-### Community 1 - "test_correlation.py"
-Cohesion: 0.24
-Nodes (7): _candles_from_returns(), Correlation measurement, clustering, and the risk manager's cluster cap., Build a candle series whose closes follow the given log returns. ``skip_every``…, A caller must never mistake "unknown" for a genuine zero correlation., _returns(), TestClustering, TestPairwiseCorrelation
+### Community 1 - "_candles_from_returns"
+Cohesion: 0.27
+Nodes (6): _candles_from_returns(), Build a candle series whose closes follow the given log returns. ``skip_every``…, A caller must never mistake "unknown" for a genuine zero correlation., _returns(), TestClustering, TestPairwiseCorrelation
 
 ### Community 2 - "PaperBroker"
-Cohesion: 0.05
-Nodes (16): Fill, Broker, PaperBroker, Protocol, Simulated fills, real bookkeeping., Units of the primary symbol - the single-symbol convenience view., Cash plus every holding marked to the prices given. Accepts a single price…, Paper trading has no external venue to drift from - the local book *is* the… (+8 more)
+Cohesion: 0.12
+Nodes (5): PaperBroker, Simulated fills, real bookkeeping., Units of the primary symbol - the single-symbol convenience view., Cash plus every holding marked to the prices given. Accepts a single price…, TestPaperBroker
 
 ### Community 3 - "EvolutionEngine"
-Cohesion: 0.10
-Nodes (15): _deflation_penalty(), Evaluation, EvolutionEngine, Any, Random, Score a genome across the whole universe. A strategy that only works on one…, Pull mutation bias out of Brain 2's reflections., Promote on out-of-sample evidence only, and only by a clear margin. Churning… (+7 more)
+Cohesion: 0.08
+Nodes (23): BacktestResult, _as_markets(), _deflation_penalty(), Evaluation, EvolutionEngine, GenerationReport, Any, Random (+15 more)
 
-### Community 4 - "test_risk_and_agent.py"
-Cohesion: 0.15
+### Community 4 - "reflect.py"
+Cohesion: 0.16
 Nodes (11): HeuristicReflector, LLMReflector, make_reflector(), Any, Reflection: turning outcomes into hypotheses. Consolidation (in…, Only real genes, only sane magnitudes. Applies to LLM output too., Optional Claude-powered reflection over the recent trade log., Rule-based post-mortem over recent trades. (+3 more)
 
-### Community 5 - "genome_with"
-Cohesion: 0.09
-Nodes (12): Gene, Any, Fill gaps, clamp everything into range, enforce cross-gene sanity., Fill gaps, clamp everything into range, enforce cross-gene sanity., flat_candles(), genome_with(), A range: no drift, small alternating moves, so slope stays near zero., An uptrend. Growth is compounded, not linear: `slope` normalises by the window… (+4 more)
+### Community 5 - "test_regime_and_costs.py"
+Cohesion: 0.12
+Nodes (11): Fill gaps, clamp everything into range, enforce cross-gene sanity., Fill gaps, clamp everything into range, enforce cross-gene sanity., flat_candles(), genome_with(), The two gates that stop a genome trading a setup it cannot win. Both exist…, A range: no drift, small alternating moves, so slope stays near zero., An uptrend. Growth is compounded, not linear: `slope` normalises by the window…, TestCostFloor (+3 more)
 
 ### Community 6 - "indicators.py"
 Cohesion: 0.17
-Nodes (22): atr(), bollinger_z(), donchian_position(), ema(), last_valid(), macd_hist(), Technical indicators in pure Python. Each function takes a list of floats (or…, How many standard deviations price sits from its own mean. (+14 more)
+Nodes (21): atr(), bollinger_z(), donchian_position(), ema(), last_valid(), macd_hist(), Technical indicators in pure Python. Each function takes a list of floats (or…, How many standard deviations price sits from its own mean. (+13 more)
 
 ### Community 7 - "Hippocampus"
-Cohesion: 0.10
-Nodes (4): Hippocampus, _now_ms(), Path, Durable, exact memory. Safe to share across threads.
+Cohesion: 0.11
+Nodes (5): Hippocampus, _now_ms(), Any, Durable, exact memory. Safe to share across threads., _row_to_genome()
 
-### Community 8 - "Position"
-Cohesion: 0.15
-Nodes (10): _position_to_dict(), Position, exit_price_for(), Where a given exit reason actually fills., Where a given exit reason actually fills., _flat_frame(), A minimal Frame for exercising update_trailing_stop/exit_reason in isolation:…, BUG 2 regression: the stop must be tested against the level known before a bar… (+2 more)
+### Community 8 - "TestTrailingStopLookahead"
+Cohesion: 0.29
+Nodes (5): _flat_frame(), A minimal Frame for exercising update_trailing_stop/exit_reason in isolation:…, BUG 2 regression: the stop must be tested against the level known before a bar…, On a constructed two-bar series, the buggy ordering manufactures a stop exit on…, TestTrailingStopLookahead
+
+### Community 9 - "TestDashboardPage"
+Cohesion: 0.12
+Nodes (3): candles(), TestCharts, TestDashboardPage
 
 ### Community 10 - "backtest.py"
-Cohesion: 0.16
-Nodes (11): BacktestResult, _aggregate_metrics(), Fold, Event-driven backtester. Deliberately pessimistic: fees on both sides, slippage…, One anchored walk-forward split: everything up to a point to fit on, and the…, Aggregate in-sample and out-of-sample results, plus the fold-by-fold detail…, Pool several fold results into one summary metric set. Trade counts sum…, Anchored, multi-fold walk-forward evaluation. A single fixed hold-out at the… (+3 more)
+Cohesion: 0.14
+Nodes (12): bars_per_year(), _aggregate_metrics(), compute_metrics(), Fold, Event-driven backtester. Deliberately pessimistic: fees on both sides, slippage…, One anchored walk-forward split: everything up to a point to fit on, and the…, Aggregate in-sample and out-of-sample results, plus the fold-by-fold detail…, Pool several fold results into one summary metric set. Trade counts sum… (+4 more)
 
 ### Community 11 - "Signal"
 Cohesion: 0.14
 Nodes (5): A strategy's opinion at one point in time., Signal, make_trade(), TestDualBrain, TestPortfolioRisk
 
-### Community 12 - "DivergenceTestCase"
-Cohesion: 0.22
-Nodes (5): DivergenceTestCase, A risk veto is classified separately from a memory veto., A missed entry with no veto logged at all is neither a fill problem nor a…, TestRiskVeto, TestUnexplainedGap
+### Community 12 - "test_divergence.py"
+Cohesion: 0.11
+Nodes (11): DivergenceTestCase, Tests for ``crypto_agent.analysis.divergence``. The two behavioural tests build…, No live trades at all - every entry the model would have taken was vetoed by…, The two scenarios must not collapse into the same generic text - this is the…, A risk veto is classified separately from a memory veto., A missed entry with no veto logged at all is neither a fill problem nor a…, Live fills that are worse than the model assumed, with every entry matched and…, TestBehaviouralDivergence (+3 more)
 
-### Community 13 - "agent.py"
-Cohesion: 0.12
-Nodes (17): The autonomous agent loop. One iteration is: perceive -> recall -> decide ->…, Live-vs-backtest divergence for the champion genome. Nothing else in the agent…, The two brains, wired together. ``DualBrain`` is the only object the rest of…, Configuration for the autonomous agent. Precedence: explicit kwargs >…, _as_markets(), GenerationReport, The evolution engine. A steady-state genetic algorithm over strategy genomes,…, Accept a symbol->candles map, or a bare series for the single-market case. (+9 more)
+### Community 13 - "types.py"
+Cohesion: 0.15
+Nodes (18): The autonomous agent loop. One iteration is: perceive -> recall -> decide ->…, Brain 1 - episodic / structured memory (SQLite). This is the agent's ledger and…, The two brains, wired together. ``DualBrain`` is the only object the rest of…, Configuration for the autonomous agent. Precedence: explicit kwargs >…, Core value types shared by every layer of the agent. Everything here is plain…, timeframe_ms(), cluster_symbols(), How correlated two markets are, measured from their candle closes. The… (+10 more)
 
 ### Community 14 - "cli.py"
-Cohesion: 0.27
-Nodes (18): cmd_backtest(), cmd_dashboard(), cmd_demo(), cmd_evolve(), cmd_memory(), cmd_obsidian(), cmd_report(), cmd_resume_risk() (+10 more)
+Cohesion: 0.22
+Nodes (22): ArgumentParser, build_parser(), cmd_backtest(), cmd_dashboard(), cmd_demo(), cmd_evolve(), cmd_memory(), cmd_obsidian() (+14 more)
 
 ### Community 15 - "TradingAgent"
-Cohesion: 0.12
-Nodes (8): Any, Sleep and dream: consolidate memories, then evolve., Run autonomously until stopped (or ``max_steps`` cycles). A cycle is one pass…, Trust the exchange over our own records before trading anything. A process that…, _release_lock(), TradingAgent, The cluster cap must actually hold in the live loop, not just in a unit test of…, TestCorrelatedExposureCapBinds
+Cohesion: 0.13
+Nodes (8): Any, Only fully closed bars. Acting on a forming candle is how a backtest that looks…, Fetch every symbol before deciding anything. Marking the book to market needs…, Sleep and dream: consolidate memories, then evolve., Run autonomously until stopped (or ``max_steps`` cycles). A cycle is one pass…, Trust the exchange over our own records before trading anything. A process that…, _release_lock(), TradingAgent
 
 ### Community 16 - "DualBrain"
-Cohesion: 0.21
-Nodes (6): DualBrain, Any, export_vault(), Mirror both brains into an Obsidian vault at ``vault_dir``. Read-only with…, make_trade(), TestExportVault
+Cohesion: 0.22
+Nodes (5): DualBrain, Any, export_vault(), Mirror both brains into an Obsidian vault at ``vault_dir``. Read-only with…, TestExportVault
 
 ### Community 17 - ".make_broker"
-Cohesion: 0.18
-Nodes (3): TestLiveModeGates, TestQuantityRounding, TestReconcile
+Cohesion: 0.08
+Nodes (16): BrokerOrderError, A live order was rejected, or its outcome could not be confirmed as a fill.…, RuntimeError, CcxtBrokerTestCase, Safety tests for CcxtBroker: order-quantity rounding, the live-mode gates, and…, ``TradingAgent.cycle()`` and ``status()`` always call ``equity()`` with a…, ``Fill.qty`` must always be what the exchange actually filled, never the…, A ``--top5``-style universe holds positions in more than one symbol.… (+8 more)
 
 ### Community 18 - "cortex.py"
-Cohesion: 0.21
-Nodes (8): Brain 2 - semantic / associative memory. Where Brain 1 answers "what happened…, Embedder, l2_normalize(), pack(), Protocol, Embeddings for Brain 2. The default embedder is a deterministic hashing…, tokenize(), unpack()
+Cohesion: 0.17
+Nodes (10): hash_text(), Brain 2 - semantic / associative memory. Where Brain 1 answers "what happened…, Retrieve the memories most relevant to ``query``. Ranking blends three things:…, One recalled memory plus the scores that surfaced it., Recall, cosine(), pack(), Embeddings for Brain 2. The default embedder is a deterministic hashing… (+2 more)
 
-### Community 19 - "types.py"
-Cohesion: 0.23
-Nodes (7): Brain 1 - episodic / structured memory (SQLite). This is the agent's ledger and…, bars_per_year(), Core value types shared by every layer of the agent. Everything here is plain…, timeframe_ms(), Risk manager - the part that is allowed to say no. Evolution optimises for…, Properties that must hold over a long run, not just on one call. These are the…, Regression tests for the risk-manager resume() kill switch and the…
+### Community 19 - "Broker"
+Cohesion: 0.12
+Nodes (9): Fill, Broker, make_broker(), Protocol, Everything the agent actually calls on a broker. This declared only…, EmptyFillBroker, PartialFillBroker, A paper broker that fills only a fraction of what it is asked for. (+1 more)
 
 ### Community 20 - "CcxtBroker"
-Cohesion: 0.12
-Nodes (8): CcxtBroker, Any, Live exchange orders through ccxt. Opt-in, guarded, and audited. Keeps a…, Pull the exchange's LOT_SIZE/PRICE_FILTER/MIN_NOTIONAL metadata once. Not every…, The exchange's LOT_SIZE increment for ``symbol``, or ``None`` when the market…, Round ``qty`` down to the venue's step size - never up, because rounding up can…, Read cash plus every tracked symbol's base-asset balance. This must cover the…, Cash plus every holding marked to the prices given. Accepts a single price…
+Cohesion: 0.09
+Nodes (11): CcxtBroker, Any, Live exchange orders through ccxt. Opt-in, guarded, and audited. Keeps a…, Pull the exchange's LOT_SIZE/PRICE_FILTER/MIN_NOTIONAL metadata once. Not every…, The exchange's LOT_SIZE increment for ``symbol``, or ``None`` when the market…, Round ``qty`` down to the venue's step size - never up, because rounding up can…, Read cash plus every tracked symbol's base-asset balance. This must cover the…, Cash plus every holding marked to the prices given. Accepts a single price… (+3 more)
 
 ### Community 21 - "RiskManager"
-Cohesion: 0.05
-Nodes (21): Any, Update the drawdown watermark and trip the kill switch if breached., Approve or refuse a new entry, sizing it within every active limit.…, None if the new position is fine; otherwise the refusal reason. A new entry is…, Cluster the given symbols by correlation, cached per bar in Brain 1. Five…, The trading day of a *market* timestamp. Deriving the day from the bar being…, Manual restart after a kill switch. Never called automatically - an agent that…, Best available estimate of current equity, for re-baselining on resume. Brain 1… (+13 more)
+Cohesion: 0.12
+Nodes (11): Any, Update the drawdown watermark and trip the kill switch if breached., Approve or refuse a new entry, sizing it within every active limit.…, None if the new position is fine; otherwise the refusal reason. A new entry is…, Cluster the given symbols by correlation, cached per bar in Brain 1. Five…, The trading day of a *market* timestamp. Deriving the day from the bar being…, Manual restart after a kill switch. Never called automatically - an agent that…, Best available estimate of current equity, for re-baselining on resume. Brain 1… (+3 more)
 
 ### Community 22 - "make_agent"
 Cohesion: 0.18
 Nodes (6): first_ts(), make_agent(), The half that did not sell is still real exposure., The partial-exit handling must not leave dust behind on a clean exit., TestEntryFollowsTheFill, TestExitFollowsTheFill
 
 ### Community 23 - "make_config"
-Cohesion: 0.16
-Nodes (7): first_ts(), make_config(), Caches keyed by bar timestamp would leave one dead row per bar., The bug this suite was written for: sizing rescaled past the cash clamp, so the…, Brain 1's positions and the broker's holdings are two records of the same fact;…, TestBookInvariants, TestStateAndStorage
+Cohesion: 0.13
+Nodes (9): first_ts(), make_config(), A halt must stop new risk, not imprison existing risk. An agent that cannot…, Caches keyed by bar timestamp would leave one dead row per bar., The bug this suite was written for: sizing rescaled past the cash clamp, so the…, Brain 1's positions and the broker's holdings are two records of the same fact;…, TestBookInvariants, TestKillSwitchDoesNotTrapPositions (+1 more)
 
 ### Community 24 - ".cycle"
-Cohesion: 0.17
-Nodes (8): CycleResult, _fmt_ts(), One decision on the primary symbol - the single-market view., Walk the whole universe once: perceive, then decide per symbol., What the agent decided about one symbol on one bar., Current exposure per market, in quote currency., One pass over the whole universe., StepResult
+Cohesion: 0.15
+Nodes (9): CycleResult, _fmt_ts(), Manage an open position with the genome that opened it. A promotion mid-trade…, One decision on the primary symbol - the single-market view., Walk the whole universe once: perceive, then decide per symbol., What the agent decided about one symbol on one bar., Current exposure per market, in quote currency., One pass over the whole universe. (+1 more)
 
 ### Community 25 - "Cortex"
-Cohesion: 0.19
-Nodes (4): Cortex, Any, Path, Vector memory with decay, reinforcement and pruning.
+Cohesion: 0.17
+Nodes (6): Cortex, _now_ms(), Any, Store a lesson. Re-learning the same text reinforces it instead of duplicating…, Forget the least useful memories once over capacity., Vector memory with decay, reinforcement and pruning.
 
 ### Community 26 - "Self-Evolving Crypto Trading Agent"
-Cohesion: 0.11
-Nodes (17): Autonomy and safety, CLI, Configuration, Dashboard, Going live (only when you mean it), Honest limits, Layout, Obsidian vault — reading the agent's mind (+9 more)
+Cohesion: 0.10
+Nodes (19): Autonomy and safety, CLI, Configuration, Dashboard, Going live (only when you mean it), Honest limits, Layout, Obsidian vault — reading the agent's mind (+11 more)
 
 ### Community 27 - "obsidian.py"
 Cohesion: 0.18
 Nodes (23): ExportReport, _frontmatter(), _index_note(), iter_note_paths(), _lesson_notes(), _lesson_symbol(), _market_notes(), _month() (+15 more)
 
-### Community 29 - "test_live_safety.py"
-Cohesion: 0.16
-Nodes (9): BrokerOrderError, A live order was rejected, or its outcome could not be confirmed as a fill.…, RuntimeError, CcxtBrokerTestCase, Safety tests for CcxtBroker: order-quantity rounding, the live-mode gates, and…, ``Fill.qty`` must always be what the exchange actually filled, never the…, Base class that arms the live-mode gates and injects a fake ccxt., TestOrderFailureHandling (+1 more)
+### Community 29 - "test_promotion_gate.py"
+Cohesion: 0.30
+Nodes (3): evaluation(), The gate that stops a genome being crowned for fitting the fit window. From a…, TestGeneralisationGate
 
 ### Community 30 - "Lesson"
-Cohesion: 0.21
+Cohesion: 0.23
 Nodes (5): _group_lessons(), Turn recent raw episodes into generalisations. Triggered by new trades, but…, Lesson, A natural-language memory written into Brain 2., TestCortex
 
-### Community 31 - ".random"
-Cohesion: 0.10
-Nodes (9): Manage an open position with the genome that opened it. A promotion mid-trade…, Random, Gaussian creep on a random subset of genes. ``nudges`` is how Brain 2 reaches…, Gaussian creep on a random subset of genes. ``nudges`` is how Brain 2 reaches…, Uniform crossover; numeric genes may also blend. Which parent a gene picks…, Uniform crossover; numeric genes may also blend. Which parent a gene picks…, ``roll < 0.4`` gated a choice of ``a if roll < 0.5 else b`` - since the gate…, TestCrossoverProvenance (+1 more)
+### Community 31 - "Genome"
+Cohesion: 0.08
+Nodes (16): Gene, Genome, Any, Random, The strategy genome - the thing that actually evolves. A genome is a flat,…, Gaussian creep on a random subset of genes. ``nudges`` is how Brain 2 reaches…, Gaussian creep on a random subset of genes. ``nudges`` is how Brain 2 reaches…, Uniform crossover; numeric genes may also blend. Which parent a gene picks… (+8 more)
 
 ### Community 32 - "_pid_alive"
-Cohesion: 0.20
-Nodes (8): _acquire_lock(), _pid_alive(), _pid_alive_windows(), Refuse to run two agents against one set of brains., Is this PID still running? ``os.kill(pid, 0)`` is the POSIX idiom, but on…, The lockfile's liveness probe must never be able to kill anything., os.kill on Windows terminates; the probe must not go near it., TestProcessLiveness
+Cohesion: 0.24
+Nodes (6): _pid_alive(), _pid_alive_windows(), Is this PID still running? ``os.kill(pid, 0)`` is the POSIX idiom, but on…, The lockfile's liveness probe must never be able to kill anything., os.kill on Windows terminates; the probe must not go near it., TestProcessLiveness
 
-### Community 33 - "test_memory.py"
-Cohesion: 0.29
-Nodes (5): cosine(), HashingEmbedder, Stable bag-of-ngrams vectoriser using blake2b for bucket assignment., Cosine similarity; inputs are expected to be L2-normalised already., TestEmbeddings
+### Community 33 - "HashingEmbedder"
+Cohesion: 0.21
+Nodes (5): HashingEmbedder, l2_normalize(), Stable bag-of-ngrams vectoriser using blake2b for bucket assignment., tokenize(), TestEmbeddings
 
 ### Community 34 - "Config"
-Cohesion: 0.14
-Nodes (10): Config, Path, Every symbol the agent trades, primary first, de-duplicated. One process…, Every symbol the agent trades, primary first, de-duplicated. One process…, position_size(), Risk-based sizing: lose ``risk_per_trade`` of equity if the stop hits. The same…, simulate(), TestBacktest (+2 more)
+Cohesion: 0.09
+Nodes (13): _acquire_lock(), Refuse to run two agents against one set of brains., _coerce(), Config, Any, Path, Every symbol the agent trades, primary first, de-duplicated. One process…, Coerce strings coming from env/JSON into the dataclass field type. (+5 more)
 
-### Community 35 - "Genome"
-Cohesion: 0.10
-Nodes (19): clamp(), Genome, Normalised gene-space distance, used to keep the population diverse., Normalised gene-space distance, used to keep the population diverse., blended_score(), initial_stops(), min_edge_for(), module_scores() (+11 more)
+### Community 35 - "min_edge_for"
+Cohesion: 0.40
+Nodes (5): min_edge_for(), Any, Fraction of notional a full open-and-close gives away to the venue., The cost floor a setup's target has to clear, from a config. Takes the config…, round_trip_cost()
 
 ### Community 36 - "Candle"
 Cohesion: 0.14
-Nodes (8): Only fully closed bars. Acting on a forming candle is how a backtest that looks…, Fetch every symbol before deciding anything. Marking the book to market needs…, Candle, BinancePublicProvider, _dedupe(), Public klines endpoint. No API key, no dependencies, read-only., CorrelatedProvider, Markets that move together, the way real majors do. The synthetic provider…
+Nodes (9): Candle, BinancePublicProvider, _dedupe(), Public klines endpoint. No API key, no dependencies, read-only., exit_price_for(), Where a given exit reason actually fills., Where a given exit reason actually fills., CorrelatedProvider (+1 more)
 
-### Community 37 - "test_walkforward.py"
-Cohesion: 0.16
-Nodes (13): BacktestMetrics, fitness_score(), Risk-adjusted score used as the GA's selection pressure. Sharpe is the…, buy_and_hold(), compute_metrics(), The trivial "buy once and do nothing" strategy, priced the same way…, ramp_candles(), Tests for the buy-and-hold benchmark, anchored walk-forward folds, and the… (+5 more)
+### Community 37 - "BacktestMetrics"
+Cohesion: 0.31
+Nodes (5): BacktestMetrics, fitness_score(), Risk-adjusted score used as the GA's selection pressure. Sharpe is the…, The pre-existing contract: fitness_score(metrics) with no other arguments must…, TestBenchmarkAwareFitness
+
+### Community 38 - "TestAgentEndToEnd"
+Cohesion: 0.13
+Nodes (4): The whole loop on deterministic offline data., TestAgentEndToEnd, The full loop, three markets, deterministic offline data., TestAgentUniverse
+
+### Community 39 - "TestDecisionReasons"
+Cohesion: 0.24
+Nodes (3): Tallying why the agent did or did not open anything. Twice in one session the…, signal(), TestDecisionReasons
 
 ### Community 40 - "Correlation"
-Cohesion: 0.16
-Nodes (14): align_closes(), cluster_symbols(), Correlation, log_returns(), pearson(), How correlated two markets are, measured from their candle closes. The…, Pearson correlation of log returns between two candle series, aligned on…, Group symbols into clusters where any pair above ``threshold`` is linked. This… (+6 more)
-
-### Community 41 - "FakeExchange"
 Cohesion: 0.17
-Nodes (5): Re-fetch the real balance (and open orders) and make the local cache match it,…, What ``reconcile()`` found when it checked the local book against the source of…, ReconcileReport, FakeExchange, Just enough of ccxt's unified exchange interface for CcxtBroker.
+Nodes (11): align_closes(), Correlation, log_returns(), pearson(), Pearson correlation of log returns between two candle series, aligned on…, The result of measuring correlation between two return series. ``value`` is…, Pair up closes from two candle series by timestamp. The two series are not…, Bar-over-bar log returns; a non-positive close yields a 0.0 return rather than… (+3 more)
+
+### Community 41 - "ReconcileReport"
+Cohesion: 0.40
+Nodes (3): Paper trading has no external venue to drift from - the local book *is* the…, What ``reconcile()`` found when it checked the local book against the source of…, ReconcileReport
 
 ### Community 42 - "SyntheticProvider"
-Cohesion: 0.10
-Nodes (8): Regime-switching geometric brownian motion with fat tails. Not a claim about…, SyntheticProvider, Start from a few hand-written archetypes, then fill with randoms. Pure random…, Start from a few hand-written archetypes, then fill with randoms. Pure random…, seed_population(), A decision at bar i must not change when future bars are appended., TestEvolutionAcrossMarkets, TestEvaluateAndDeflation
+Cohesion: 0.11
+Nodes (11): Regime-switching geometric brownian motion with fat tails. Not a claim about…, SyntheticProvider, buy_and_hold(), The trivial "buy once and do nothing" strategy, priced the same way…, TestEvolutionAcrossMarkets, ramp_candles(), Tests for the buy-and-hold benchmark, anchored walk-forward folds, and the…, A deterministic price path with no wicks, so the arithmetic in a test can be… (+3 more)
 
-### Community 43 - "TestMultiSymbolReconcileKeepsEveryHolding"
+### Community 43 - "_decision_bucket"
+Cohesion: 0.27
+Nodes (4): _decision_bucket(), Why the recent decisions went the way they did, most common first. Every…, Collapse one decision into a stable category. The action says what happened;…, TestDecisionBucket
+
+### Community 44 - "TestStoredConfigAdoption"
+Cohesion: 0.19
+Nodes (6): Any, The config the agent last booted with, straight out of Brain 1., stored_config(), Inspection commands must describe the agent that actually ran., A stored live mode must not arm a read-only command., TestStoredConfigAdoption
+
+### Community 45 - "simulate"
+Cohesion: 0.11
+Nodes (25): clamp(), simulate(), blended_score(), compute_frame(), exit_reason(), Frame, initial_stops(), module_scores() (+17 more)
+
+### Community 46 - "TestCashIsNeverOverdrawn"
 Cohesion: 0.22
-Nodes (3): A ``--top5``-style universe holds positions in more than one symbol.…, TestMultiSymbolReconcileKeepsEveryHolding, TestPaperBrokerReconcile
+Nodes (4): A spot book cannot spend money it does not have. position_size() fits the order…, What the broker will actually take out of cash: the slipped fill price plus the…, Selling short raises cash rather than spending it., TestCashIsNeverOverdrawn
 
-### Community 44 - "test_dashboard_and_cli.py"
-Cohesion: 0.16
-Nodes (8): ArgumentParser, build_parser(), Any, The config the agent last booted with, straight out of Brain 1., stored_config(), Inspection commands must describe the agent that actually ran., A stored live mode must not arm a read-only command., TestStoredConfigAdoption
-
-### Community 45 - "Frame"
-Cohesion: 0.15
-Nodes (13): exit_reason(), Frame, Ratchet the stop toward price using bar ``i``'s close; never loosen it. The…, Why this position should close now, or ``None`` to hold. Checked against the…, Ratchet the stop toward price using bar ``i``'s close; never loosen it. The…, All indicator series a genome needs, computed once over the history., Why this position should close now, or ``None`` to hold. Checked against the…, A coarse, human-readable label. Brain 2 groups its lessons by this, so it has… (+5 more)
-
-### Community 46 - "TestFillDivergence"
-Cohesion: 0.17
-Nodes (5): No live trades at all - every entry the model would have taken was vetoed by…, The two scenarios must not collapse into the same generic text - this is the…, Live fills that are worse than the model assumed, with every entry matched and…, TestBehaviouralDivergence, TestFillDivergence
-
-### Community 47 - ".load"
+### Community 48 - "TestBacktest"
 Cohesion: 0.24
-Nodes (5): _coerce(), Any, Coerce strings coming from env/JSON into the dataclass field type., Coerce strings coming from env/JSON into the dataclass field type., TestConfig
+Nodes (4): position_size(), Risk-based sizing: lose ``risk_per_trade`` of equity if the stop hits. The same…, A decision at bar i must not change when future bars are appended., TestBacktest
 
 ### Community 49 - "TestDashboardIntegration"
 Cohesion: 0.13
@@ -295,41 +311,37 @@ Nodes (5): Turn a symbol or lesson title into a filename safe everywhere. ``BTC/
 Cohesion: 0.25
 Nodes (4): _clamp(), MemoryBias, The query Brain 2 is searched with - deliberately written in the same…, What Brain 2 wants to change about the decision Brain 1's strategy made.
 
-### Community 61 - "Recall"
-Cohesion: 0.33
-Nodes (3): Retrieve the memories most relevant to ``query``. Ranking blends three things:…, One recalled memory plus the scores that surfaced it., Recall
-
-### Community 62 - ".remember"
-Cohesion: 0.33
-Nodes (4): hash_text(), _now_ms(), Store a lesson. Re-learning the same text reinforces it instead of duplicating…, Forget the least useful memories once over capacity.
-
 ### Community 63 - "Trade"
-Cohesion: 0.28
-Nodes (5): _row_to_trade(), A closed trade lands in both brains: the row in Brain 1, the story in Brain 2., A round trip, written to Brain 1 and distilled into Brain 2., Trade, Row
+Cohesion: 0.33
+Nodes (4): A closed trade lands in both brains: the row in Brain 1, the story in Brain 2., A round trip, written to Brain 1 and distilled into Brain 2., Trade, make_trade()
 
-### Community 64 - "providers.py"
-Cohesion: 0.21
-Nodes (8): CachedProvider, CcxtProvider, make_provider(), MarketDataProvider, Protocol, Market data providers. Three sources, one interface: * ``SyntheticProvider`` -…, Any ccxt exchange. ``pip install ccxt`` to enable., Persist every candle in Brain 1 and survive network outages.
+### Community 64 - ".__init__"
+Cohesion: 0.18
+Nodes (7): CachedProvider, CcxtProvider, make_provider(), MarketDataProvider, Protocol, Any ccxt exchange. ``pip install ccxt`` to enable., Persist every candle in Brain 1 and survive network outages.
+
+### Community 66 - "Embedder"
+Cohesion: 0.40
+Nodes (3): Path, Embedder, Protocol
 
 ## Knowledge Gaps
-- **16 isolated node(s):** `self-evolving-crypto-agent`, `Quickstart`, `The two brains`, `Trading a universe`, `Self-evolution` (+11 more)
+- **18 isolated node(s):** `self-evolving-crypto-agent`, `Quickstart`, `The two brains`, `Trading a universe`, `Self-evolution` (+13 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **11 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **13 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Config` connect `Config` to `dashboard.py`, `test_correlation.py`, `PaperBroker`, `EvolutionEngine`, `test_risk_and_agent.py`, `genome_with`, `backtest.py`, `Signal`, `DivergenceTestCase`, `agent.py`, `cli.py`, `TradingAgent`, `DualBrain`, `.make_broker`, `types.py`, `CcxtBroker`, `RiskManager`, `make_agent`, `make_config`, `Cortex`, `obsidian.py`, `TestRiskManager`, `test_live_safety.py`, `_pid_alive`, `test_memory.py`, `Genome`, `test_walkforward.py`, `TestAgentEndToEnd`, `TestAgentUniverse`, `FakeExchange`, `SyntheticProvider`, `TestMultiSymbolReconcileKeepsEveryHolding`, `test_dashboard_and_cli.py`, `.load`, `TestDashboardIntegration`, `TestDashboardPage`, `TestCheckEntryCorrelationCap`?**
-  _High betweenness centrality (0.281) - this node is a cross-community bridge._
-- **Why does `DualBrain` connect `DualBrain` to `dashboard.py`, `test_correlation.py`, `PaperBroker`, `EvolutionEngine`, `test_risk_and_agent.py`, `Hippocampus`, `Signal`, `DivergenceTestCase`, `agent.py`, `cli.py`, `types.py`, `RiskManager`, `Cortex`, `TestRiskManager`, `Lesson`, `test_memory.py`, `test_walkforward.py`, `SyntheticProvider`, `test_dashboard_and_cli.py`, `TestDashboardIntegration`, `TestDashboardPage`, `TestCheckEntryCorrelationCap`, `MemoryBias`, `Recall`, `Trade`?**
-  _High betweenness centrality (0.107) - this node is a cross-community bridge._
-- **Why does `Genome` connect `Genome` to `dashboard.py`, `Config`, `EvolutionEngine`, `genome_with`, `indicators.py`, `SyntheticProvider`, `backtest.py`, `agent.py`, `cli.py`, `TradingAgent`, `Frame`, `.cycle`, `.random`?**
-  _High betweenness centrality (0.094) - this node is a cross-community bridge._
-- **Are the 42 inferred relationships involving `Config` (e.g. with `_acquire_lock()` and `TradingAgent`) actually correct?**
-  _`Config` has 42 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 25 inferred relationships involving `DualBrain` (e.g. with `Cortex` and `Recall`) actually correct?**
-  _`DualBrain` has 25 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `Config` connect `Config` to `dashboard.py`, `_candles_from_returns`, `PaperBroker`, `EvolutionEngine`, `test_regime_and_costs.py`, `TestDashboardPage`, `backtest.py`, `Signal`, `test_divergence.py`, `types.py`, `cli.py`, `TradingAgent`, `DualBrain`, `.make_broker`, `Broker`, `CcxtBroker`, `RiskManager`, `make_agent`, `make_config`, `obsidian.py`, `TestRiskManager`, `test_promotion_gate.py`, `Genome`, `HashingEmbedder`, `TestAgentEndToEnd`, `SyntheticProvider`, `TestStoredConfigAdoption`, `simulate`, `TestCashIsNeverOverdrawn`, `TestBacktest`, `TestDashboardIntegration`, `TestCorrelationWindow`, `TestCheckEntryCorrelationCap`, `TestMultiAssetBook`, `TestResumeRebaselinesWatermarks`, `Trade`, `.__init__`, `TestBackwardCompatibility`?**
+  _High betweenness centrality (0.254) - this node is a cross-community bridge._
+- **Why does `DualBrain` connect `DualBrain` to `dashboard.py`, `_candles_from_returns`, `PaperBroker`, `EvolutionEngine`, `Hippocampus`, `TestDashboardPage`, `Signal`, `test_divergence.py`, `types.py`, `cli.py`, `cortex.py`, `Cortex`, `TestRiskManager`, `test_promotion_gate.py`, `Lesson`, `HashingEmbedder`, `SyntheticProvider`, `TestStoredConfigAdoption`, `TestCashIsNeverOverdrawn`, `TestDashboardIntegration`, `TestCorrelationWindow`, `TestCheckEntryCorrelationCap`, `MemoryBias`, `TestMultiAssetBook`, `TestResumeRebaselinesWatermarks`, `Trade`, `.__init__`, `TestBackwardCompatibility`?**
+  _High betweenness centrality (0.121) - this node is a cross-community bridge._
+- **Why does `Candle` connect `Candle` to `dashboard.py`, `_candles_from_returns`, `EvolutionEngine`, `test_regime_and_costs.py`, `indicators.py`, `Hippocampus`, `TestTrailingStopLookahead`, `TestDashboardPage`, `backtest.py`, `Signal`, `test_divergence.py`, `types.py`, `TradingAgent`, `RiskManager`, `.cycle`, `Genome`, `Correlation`, `SyntheticProvider`, `simulate`, `TestDashboardIntegration`, `TestIndicators`, `TestCorrelationWindow`, `.__init__`?**
+  _High betweenness centrality (0.080) - this node is a cross-community bridge._
+- **Are the 43 inferred relationships involving `Config` (e.g. with `_acquire_lock()` and `TradingAgent`) actually correct?**
+  _`Config` has 43 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 26 inferred relationships involving `DualBrain` (e.g. with `Cortex` and `Recall`) actually correct?**
+  _`DualBrain` has 26 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 5 inferred relationships involving `Candle` (e.g. with `TestPairwiseCorrelation` and `CorrelatedProvider`) actually correct?**
   _`Candle` has 5 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 17 inferred relationships involving `Genome` (e.g. with `simulate()` and `walk_forward()`) actually correct?**
-  _`Genome` has 17 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 18 inferred relationships involving `Genome` (e.g. with `simulate()` and `walk_forward()`) actually correct?**
+  _`Genome` has 18 INFERRED edges - model-reasoned connections that need verification._

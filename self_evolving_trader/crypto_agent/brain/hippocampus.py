@@ -200,6 +200,29 @@ class Hippocampus:
             )
             self._conn.commit()
 
+    def decision_reasons(self, limit: int = 2000) -> List[Dict[str, Any]]:
+        """Why the recent decisions went the way they did, most common first.
+
+        Every decision already stores its reason and whether it executed, so
+        "the agent is not opening anything and I cannot see why" is a question
+        the ledger can already answer - it just needed asking. Reasons carry
+        live numbers ("volatility 0.041 above genome ceiling 0.038"), so they
+        are bucketed by their leading words rather than counted verbatim.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT action, reason, executed FROM decisions ORDER BY ts DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        buckets: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            key = _decision_bucket(row["action"] or "", row["reason"] or "")
+            entry = buckets.setdefault(key, {"reason": key, "count": 0, "executed": 0,
+                                             "example": row["reason"] or ""})
+            entry["count"] += 1
+            entry["executed"] += int(row["executed"] or 0)
+        return sorted(buckets.values(), key=lambda b: -b["count"])
+
     def recent_decisions(self, limit: int = 20) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
@@ -440,6 +463,44 @@ class Hippocampus:
             self.set_state(self.LEGACY_POSITION_KEY, None)
             return {position.symbol: position}
         return {name: Position(**data) for name, data in raw.items()}
+
+
+_REASON_PREFIXES = (
+    ("warming up", "warming up"),
+    ("volatility", "volatility above the genome's ceiling"),
+    ("genome stands aside", "genome stands aside in a ranging market"),
+    ("target", "target below the cost floor"),
+    ("memory vetoed", "memory vetoed the entry"),
+    ("stand aside score", "score below the entry threshold"),
+)
+
+
+def _decision_bucket(action: str, reason: str) -> str:
+    """Collapse one decision into a stable category.
+
+    The action says what happened; only when nothing happened ("flat") does the
+    signal's own reason say why, and that text carries live numbers, so it is
+    matched by its leading words rather than counted verbatim.
+    """
+    act = action.strip().lower()
+    if act.startswith("open:"):
+        return "opened a position"
+    if act.startswith("close:"):
+        return f"closed a position ({act.split(':', 1)[1]})"
+    if act == "hold":
+        return "already in a position, holding"
+    if act == "veto:memory":
+        return "memory vetoed the entry"
+    if act == "veto:risk":
+        return "risk limits blocked the entry (see `report` for which)"
+    if act and act != "flat":
+        return act
+
+    low = reason.strip().lower()
+    for prefix, label in _REASON_PREFIXES:
+        if low.startswith(prefix):
+            return label
+    return " ".join(reason.split()[:4]) or "no signal"
 
 
 def _position_to_dict(p: Position) -> Dict[str, Any]:

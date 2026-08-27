@@ -333,6 +333,22 @@ class EvolutionEngine:
     # ------------------------------------------------------------------
     # Promotion and breeding
     # ------------------------------------------------------------------
+    def _generalises(self, ev: Evaluation) -> bool:
+        """Did the hold-out agree with the fit, or did the genome fit noise?
+
+        A real edge shows up on data the search never selected against. A genome
+        scoring +2.3 in-sample and -2.2 out-of-sample has not found one - it has
+        memorised the fit window, and the deflation penalty alone does not catch
+        it because that number can still be the best of its generation. So when
+        the in-sample score is positive, require the hold-out to keep a share of
+        it. Nothing is asked of a genome whose in-sample score is negative: it
+        has to beat the incumbent on the hold-out anyway, and a candidate that
+        does better out-of-sample than in is not the failure mode being caught.
+        """
+        if ev.fitness <= 0:
+            return True
+        return ev.oos_fitness >= self.cfg.min_generalisation * ev.fitness
+
     def maybe_promote(self, evaluations: Sequence[Evaluation]) -> tuple[bool, str]:
         """Promote on out-of-sample evidence only, and only by a clear margin.
 
@@ -345,6 +361,7 @@ class EvolutionEngine:
             e for e in evaluations
             if e.pooled_oos_trades >= self.cfg.min_trades_for_promotion
             and e.worst_oos_drawdown <= self.cfg.max_drawdown_pct
+            and self._generalises(e)
         ]
         if not candidates:
             return False, (current or {}).get("id", "none")
