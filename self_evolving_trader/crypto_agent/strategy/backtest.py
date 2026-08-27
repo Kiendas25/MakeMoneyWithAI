@@ -65,7 +65,7 @@ def simulate(
     if len(candles) < 60:
         return BacktestResult(BacktestMetrics(final_equity=start_cash or cfg.start_cash))
 
-    frame = rules.compute_frame(genome, candles)
+    frame = rules.compute_frame(genome, candles, min_edge=rules.min_edge_for(cfg))
     fee_rate = cfg.fee_bps / 10_000.0
     slip = cfg.slippage_bps / 10_000.0
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from ..core.types import Candle, Position, Signal
 from ..data import indicators as ind
@@ -37,12 +37,32 @@ class Frame:
     vol: ind.Series
     slope: ind.Series
     warmup: int
+    # Smallest move, as a fraction of price, worth opening for. Carried on the
+    # frame so the live agent and the backtester cannot drift apart on it.
+    min_edge: float = 0.0
 
     def __len__(self) -> int:
         return len(self.candles)
 
 
-def compute_frame(genome: Genome, candles: Sequence[Candle]) -> Frame:
+def round_trip_cost(fee_bps: float, slippage_bps: float) -> float:
+    """Fraction of notional a full open-and-close gives away to the venue."""
+    return 2.0 * (fee_bps + slippage_bps) / 10_000.0
+
+
+def min_edge_for(cfg: Any) -> float:
+    """The cost floor a setup's target has to clear, from a config.
+
+    Takes the config structurally rather than by import: ``rules`` sits below
+    ``config`` and should stay there.
+    """
+    return float(getattr(cfg, "min_edge_multiple", 0.0)) * round_trip_cost(
+        float(getattr(cfg, "fee_bps", 0.0)), float(getattr(cfg, "slippage_bps", 0.0))
+    )
+
+
+def compute_frame(genome: Genome, candles: Sequence[Candle],
+                  min_edge: float = 0.0) -> Frame:
     closes = [c.close for c in candles]
     g = genome.genes
     warmup = max(
@@ -67,6 +87,7 @@ def compute_frame(genome: Genome, candles: Sequence[Candle]) -> Frame:
         vol=ind.realized_vol(closes, int(g["vol_len"])),
         slope=ind.slope(closes, int(g["slope_len"])),
         warmup=warmup,
+        min_edge=min_edge,
     )
 
 
@@ -124,9 +145,29 @@ def module_scores(genome: Genome, frame: Frame, i: int) -> Dict[str, float]:
     return scores
 
 
-def blended_score(genome: Genome, scores: Dict[str, float]) -> float:
+def blended_score(genome: Genome, scores: Dict[str, float],
+                  regime: str = "unknown") -> float:
+    """Weighted vote of the modules, with the mix conditioned on the regime.
+
+    Trend and breakout say "this is going somewhere"; in a range they are
+    reliably wrong, because the edge of a range is where price turns around
+    rather than keeps going. ``range_meanrev_bias`` lets a genome rotate that
+    much of its weight to mean-reversion once the regime says range, so one
+    genome can hold two behaviours instead of applying its trend logic
+    everywhere and paying for it.
+    """
     g = genome.genes
     weights = {m: float(g[f"w_{m}"]) for m in MODULES}
+    bias = float(g.get("range_meanrev_bias", 0.0))
+    if bias > 0 and regime.startswith("range"):
+        moved = 0.0
+        for name in ("trend", "breakout", "macd"):
+            if name in weights:
+                shift = weights[name] * bias
+                weights[name] -= shift
+                moved += shift
+        if "meanrev" in weights:
+            weights["meanrev"] += moved
     total = sum(weights.values())
     if total <= 0:
         return 0.0
@@ -139,7 +180,7 @@ def signal_at(genome: Genome, frame: Frame, i: int) -> Signal:
         return Signal(0, 0.0, "warming up", {}, regime)
 
     scores = module_scores(genome, frame, i)
-    score = blended_score(genome, scores)
+    score = blended_score(genome, scores, regime)
     g = genome.genes
 
     vol = frame.vol[i]
@@ -151,6 +192,27 @@ def signal_at(genome: Genome, frame: Frame, i: int) -> Signal:
             {**scores, "vol": vol},
             regime,
         )
+
+    if regime.startswith("range") and not bool(g.get("trade_range", True)):
+        return Signal(0, score, f"genome stands aside in {regime}",
+                      {**scores, "vol": vol or 0.0}, regime)
+
+    # A setup whose target cannot clear the round trip is a losing lottery
+    # ticket however good the signal is: entry and exit each pay a fee and
+    # slippage, so a take-profit inside that band loses by construction.
+    atr = frame.atr[i]
+    close = frame.candles[i].close
+    if frame.min_edge > 0 and atr and close > 0:
+        target = float(g["tp_atr_mult"]) * atr / close
+        if target < frame.min_edge:
+            return Signal(
+                0,
+                score,
+                f"target {target * 100:.2f}% below the {frame.min_edge * 100:.2f}% "
+                f"cost floor",
+                {**scores, "vol": vol or 0.0, "target": target},
+                regime,
+            )
 
     threshold = float(g["entry_threshold"])
     direction = 0

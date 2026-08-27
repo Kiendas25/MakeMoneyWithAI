@@ -215,7 +215,7 @@ class TradingAgent:
                 continue
             position = positions.get(symbol)
             genome = self._genome_for_position(position) if position else self.champion
-            frame = rules.compute_frame(genome, candles)
+            frame = rules.compute_frame(genome, candles, min_edge=rules.min_edge_for(self.cfg))
             i = len(candles) - 1
             signal = rules.signal_at(genome, frame, i)
             if position is not None:

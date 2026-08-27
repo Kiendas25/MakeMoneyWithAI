@@ -32,7 +32,7 @@ cd self_evolving_trader
 # 250 steps of the entire loop on deterministic synthetic data, no network
 python3 -m crypto_agent demo --steps 400 --fresh
 
-# the tests (230, stdlib unittest, ~100s)
+# the tests (243, stdlib unittest, ~100s)
 python3 -m pytest tests -q
 ```
 
@@ -184,6 +184,45 @@ which are validated against the gene whitelist and bounds before anything is
 trusted, and which fall back to the heuristic on any error).
 
 ---
+
+## Two gates on entry
+
+A paper run on live 5m data closed 12 trades and lost all 12. Every one was a
+breakout-led long, in `range_low_vol`, closed by its stop. Two things were
+wrong, and both are now gates the strategy has to pass.
+
+**The regime was decoration.** It was classified, stored on every trade and
+shown in every report — but nothing could act on it. A genome bred in a trend
+kept buying breakouts once the market went sideways, which is buying the top of
+a range immediately before it turns. Two genes fix that: `trade_range` lets a
+genome stand aside when the regime says range, and `range_meanrev_bias` rotates
+that fraction of its trend/breakout/macd weight into mean-reversion instead, so
+one genome can hold two behaviours rather than applying its trend logic
+everywhere and paying for it.
+
+**Nothing made a target clear its own costs.** Entry and exit each pay a fee
+and slippage — 0.30% round trip at the defaults — and the gene space happily
+bred genomes whose take-profit sat inside that band, losing by construction.
+`min_edge_multiple` (default 1.5) refuses any setup whose target does not clear
+the round trip by that multiple. It is config, not a gene: clearing your own
+costs is physics, not taste, and evolution should not get a vote.
+
+Replaying that failure on a synthetic range — the same breakout-led genome,
+1384 bars, all of them `range_low_vol`:
+
+| | trades | win rate | return |
+|---|---|---|---|
+| old behaviour | 82 | 26.8% | −10.68% |
+| + cost floor | 7 | 28.6% | −0.91% |
+| + stand aside in ranges | 0 | — | 0.00% |
+| + mean-revert in ranges | 7 | **71.4%** | −0.05% |
+
+Read that as "the mechanism does what it claims", not as a profit result: it is
+a series built to be range-bound, and the best row is still a rounding error
+below zero. The point is that a 27% win rate becomes 71% once the genome is
+allowed to notice which market it is in, and that the trades which cannot pay
+for themselves stop happening. Fewer trades but informative ones beats 82
+trades whose only lesson is "everything loses".
 
 ## Autonomy and safety
 
@@ -337,7 +376,7 @@ crypto_agent/
   execution/
     broker.py           PaperBroker / CcxtBroker
     risk.py             limits, sizing, kill switch
-tests/                  230 tests, stdlib unittest (pytest-compatible)
+tests/                  243 tests, stdlib unittest (pytest-compatible)
 ```
 
 ## Working on the code with an AI assistant

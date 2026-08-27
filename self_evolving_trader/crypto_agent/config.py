@@ -56,6 +56,10 @@ class Config:
     correlation_threshold: float = 0.7  # above this, two markets count as one bet
     cooldown_bars_after_loss: int = 2
     min_notional: float = 10.0
+    # A take-profit has to clear the round trip by this multiple or the setup
+    # is refused. Not a gene: clearing your own costs is physics, not taste,
+    # and evolution should not get to breed strategies that cannot.
+    min_edge_multiple: float = 1.5
     allow_short: bool = False  # spot-style default; genomes may still want it
 
     # --- evolution ---
@@ -191,6 +195,8 @@ class Config:
             raise ValueError("benchmark_weight must be in [0, 1]")
         if self.max_open_positions < 1:
             raise ValueError("max_open_positions must be at least 1")
+        if self.min_edge_multiple < 0:
+            raise ValueError("min_edge_multiple must not be negative")
         for name in self.symbol_list:
             if "/" not in name:
                 raise ValueError(f"symbol {name!r} must look like BASE/QUOTE, e.g. BTC/USDT")

@@ -26,6 +26,10 @@ class Gene:
     low: float
     high: float
     note: str = ""
+    # What a genome saved before this gene existed should inherit. Pick the
+    # value that preserves the old behaviour, so adding a gene never silently
+    # changes what a stored champion does - evolution can discover the rest.
+    default: Optional[Any] = None
 
     def span(self) -> float:
         return max(1e-9, self.high - self.low)
@@ -75,6 +79,17 @@ GENE_SPECS: Dict[str, Gene] = {
     "risk_scale": Gene("float", 0.25, 2.0, "multiplier on the configured risk"),
     # --- direction ---
     "allow_short": Gene("bool", 0, 1, "may open shorts"),
+
+    # --- regime conditioning ---
+    # Without these the regime is decoration: it gets labelled, stored and
+    # reported, but the strategy cannot act on it, so a genome bred in a trend
+    # keeps buying breakouts in a range - which is buying the top of the range.
+    "trade_range": Gene("bool", 0, 1, "may open while the regime says 'range'",
+                        default=True),
+    "range_meanrev_bias": Gene("float", 0.0, 1.0,
+                               "in a range, rotate this fraction of the module "
+                               "weight from trend/breakout to mean-reversion",
+                               default=0.0),
 }
 
 
@@ -113,7 +128,12 @@ class Genome:
         """Fill gaps, clamp everything into range, enforce cross-gene sanity."""
         out: Dict[str, Any] = {}
         for name, spec in GENE_SPECS.items():
-            value = genes.get(name, (spec.low + spec.high) / 2 if spec.kind != "bool" else False)
+            if name in genes:
+                value = genes[name]
+            elif spec.default is not None:
+                value = spec.default
+            else:
+                value = (spec.low + spec.high) / 2 if spec.kind != "bool" else False
             out[name] = spec.clamp(value)
         if out["ema_slow"] <= out["ema_fast"]:
             out["ema_slow"] = GENE_SPECS["ema_slow"].clamp(out["ema_fast"] + 5)
