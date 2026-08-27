@@ -66,14 +66,36 @@ class ReconcileReport:
 
 
 class Broker(Protocol):
+    """Everything the agent actually calls on a broker.
+
+    This declared only ``market_order`` and ``cash`` while the agent also called
+    ``equity``, ``holdings``, ``qty_of`` and ``reconcile`` - which is exactly why
+    nothing caught ``CcxtBroker.equity`` taking a scalar when every caller passes
+    a symbol-to-price map. An interface that omits the methods in use cannot
+    protect anyone, so it lists them all now.
+    """
+
     name: str
 
     def market_order(self, side: str, qty: float, price: float, ts: int,
                      symbol: Optional[str] = None) -> Fill:
         ...
 
+    def equity(self, price: "float | Mapping[str, float]") -> float:
+        ...
+
+    def qty_of(self, symbol: str) -> float:
+        ...
+
+    def reconcile(self) -> "ReconcileReport":
+        ...
+
     @property
     def cash(self) -> float:
+        ...
+
+    @property
+    def holdings(self) -> Dict[str, float]:
         ...
 
 
@@ -319,11 +341,23 @@ class CcxtBroker:
 
     # -- balances ----------------------------------------------------------
     def _fetch_live_book(self) -> Tuple[float, Dict[str, float]]:
+        """Read cash plus every tracked symbol's base-asset balance.
+
+        This must cover the whole ``cfg.symbol_list``, not just the primary
+        symbol: ``reconcile()`` replaces ``_holdings`` wholesale with whatever
+        this returns, so reading only the primary symbol's base asset would
+        make every reconciliation on a multi-symbol (``--top5``) universe
+        delete every non-primary position from the local book.
+        """
         balance = self.exchange.fetch_balance()
         free = balance.get("free", {}) or {}
         cash = float(free.get(self.quote, 0.0))
-        base_qty = float(free.get(self.base, 0.0))
-        holdings = {self.cfg.symbol: base_qty} if abs(base_qty) > 1e-12 else {}
+        holdings: Dict[str, float] = {}
+        for symbol in self.cfg.symbol_list:
+            base = symbol.split("/")[0]
+            qty = float(free.get(base, 0.0))
+            if abs(qty) > 1e-12:
+                holdings[symbol] = qty
         return cash, holdings
 
     @property
@@ -338,8 +372,20 @@ class CcxtBroker:
     def qty(self) -> float:
         return self._holdings.get(self.cfg.symbol, 0.0)
 
-    def equity(self, price: float) -> float:
-        return self._cash + self.qty * price
+    def equity(self, price: float | Mapping[str, float]) -> float:
+        """Cash plus every holding marked to the prices given.
+
+        Accepts a single price (primary symbol) or a symbol->price mapping,
+        exactly like ``PaperBroker.equity`` - ``TradingAgent.cycle()`` and
+        ``status()`` always pass the mapping shape once any candles have been
+        fetched, so accepting only a bare float here made every live cycle
+        raise ``TypeError`` before a single decision could be made.
+        """
+        if isinstance(price, Mapping):
+            return self._cash + sum(
+                qty * float(price.get(sym, 0.0)) for sym, qty in self._holdings.items()
+            )
+        return self._cash + self.qty * float(price)
 
     # -- orders --------------------------------------------------------
     def market_order(self, side: str, qty: float, price: float, ts: int,
@@ -392,7 +438,23 @@ class CcxtBroker:
 
         filled_price = float(order.get("average") or order.get("price") or price)
         fee_info = order.get("fee") or {}
-        fee = float(fee_info.get("cost") or filled * filled_price * self.cfg.fee_bps / 10_000.0)
+        # `or` would treat a genuine zero fee - a maker rebate, a fee-free
+        # promotion, a BNB-discounted fill reported as 0 in the quote currency -
+        # as a missing value and substitute a fabricated estimate. Only a truly
+        # absent cost gets the estimate, and when it does the fill says so, so
+        # nothing downstream mistakes a guess for a reported number.
+        reported_fee = fee_info.get("cost")
+        fee_estimated = reported_fee is None
+        fee = (
+            filled * filled_price * self.cfg.fee_bps / 10_000.0
+            if fee_estimated else float(reported_fee)
+        )
+        if fee_estimated:
+            self.brain.log_event(
+                "fee_estimated",
+                f"{market_symbol} order reported no fee; charging the configured "
+                f"{self.cfg.fee_bps:.1f}bp estimate of {fee:.8f}",
+                {"order_id": order.get("id")}, level="WARNING")
 
         signed = filled if side == "buy" else -filled
         self._cash -= signed * filled_price + fee

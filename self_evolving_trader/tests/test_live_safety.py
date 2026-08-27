@@ -212,6 +212,60 @@ class TestOrderFailureHandling(CcxtBrokerTestCase):
         self.assertLess(broker.cash, cash_before)
 
 
+class TestEquityAcceptsThePriceMapAgentActuallyPasses(CcxtBrokerTestCase):
+    """``TradingAgent.cycle()`` and ``status()`` always call ``equity()`` with a
+    symbol->price dict once any candles have been fetched - never a bare
+    float. Before the fix, ``CcxtBroker.equity`` only had the scalar branch
+    ``PaperBroker.equity`` already handled, so this call shape raised
+    ``TypeError`` on literally the first live cycle.
+    """
+
+    def test_equity_with_a_price_mapping_marks_every_holding(self):
+        broker = self.make_broker()
+        broker._cash = 700.0
+        broker._holdings = {"BTC/USDT": 0.5}
+        # exactly the call shape TradingAgent.cycle()/status() use: a
+        # symbol->price dict, not a scalar.
+        equity = broker.equity({"BTC/USDT": 100.0})
+        self.assertAlmostEqual(equity, 700.0 + 0.5 * 100.0)
+
+    def test_equity_mapping_marks_every_symbol_in_a_multi_symbol_book(self):
+        broker = self.make_broker()
+        broker._cash = 500.0
+        broker._holdings = {"BTC/USDT": 0.1, "ETH/USDT": 2.0}
+        equity = broker.equity({"BTC/USDT": 100.0, "ETH/USDT": 50.0})
+        self.assertAlmostEqual(equity, 500.0 + 0.1 * 100.0 + 2.0 * 50.0)
+
+    def test_equity_still_accepts_a_bare_scalar_for_the_primary_symbol(self):
+        broker = self.make_broker()
+        broker._cash = 700.0
+        broker._holdings = {"BTC/USDT": 0.5}
+        self.assertAlmostEqual(broker.equity(100.0), 700.0 + 0.5 * 100.0)
+
+
+class TestPartialFillReportsTruth(CcxtBrokerTestCase):
+    """``Fill.qty`` must always be what the exchange actually filled, never
+    the requested (or step-rounded) amount - the caller sizes the resulting
+    position from ``fill.qty`` and has no other way to learn that an order
+    only partially filled.
+    """
+
+    def test_a_partial_exchange_fill_is_reported_as_partial_not_full(self):
+        broker = self.make_broker()
+        # the exchange only fills half of whatever quantity it is sent.
+        self.exchange.next_order = {
+            "id": "partial-1", "status": "closed", "filled": 0.1,
+            "average": 100.0, "fee": {"cost": 0.1 * 100.0 * 0.001},
+        }
+        fill = broker.market_order("buy", 0.2, 100.0, 0)
+        # the requested 0.2 (and its step-rounded form, also 0.2 here) must
+        # never leak into the reported fill - only the true 0.1 that filled.
+        self.assertAlmostEqual(fill.qty, 0.1, places=9)
+        self.assertNotAlmostEqual(fill.qty, 0.2, places=9)
+        # and the local book must reflect that same true amount, not the ask.
+        self.assertAlmostEqual(broker.qty, 0.5 + 0.1, places=9)
+
+
 class TestReconcile(CcxtBrokerTestCase):
     def test_reconcile_corrects_a_drifted_local_book_and_logs_it(self):
         broker = self.make_broker()
@@ -245,6 +299,57 @@ class TestReconcile(CcxtBrokerTestCase):
         self.exchange.open_orders = [{"id": "a"}, {"id": "b"}]
         report = broker.reconcile()
         self.assertEqual(report.open_orders, 2)
+
+
+class TestMultiSymbolReconcileKeepsEveryHolding(CcxtBrokerTestCase):
+    """A ``--top5``-style universe holds positions in more than one symbol.
+
+    ``reconcile()`` replaces ``_holdings`` wholesale with whatever
+    ``_fetch_live_book()`` returns, so if that method only ever looked at the
+    primary symbol's base asset, reconciling would silently delete every
+    other position from the local book on the very first call.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = Config(
+            data_dir=self.tmp.name, mode="live", symbol="BTC/USDT",
+            symbols="ETH/USDT,SOL/USDT", exchange="binance", min_notional=10.0,
+        )
+        self.exchange.balance = {
+            "free": {"USDT": 1_000.0, "BTC": 0.5, "ETH": 3.0, "SOL": 40.0},
+            "used": {}, "total": {},
+        }
+
+    def test_fetch_live_book_reads_every_symbol_in_the_universe(self):
+        broker = self.make_broker()
+        # construction itself calls _fetch_live_book(); it must already have
+        # picked up every symbol, not just the primary BTC/USDT.
+        self.assertEqual(
+            broker.holdings,
+            {"BTC/USDT": 0.5, "ETH/USDT": 3.0, "SOL/USDT": 40.0},
+        )
+
+    def test_reconcile_does_not_delete_non_primary_holdings(self):
+        broker = self.make_broker()
+        report = broker.reconcile()
+        self.assertTrue(report.clean)
+        self.assertEqual(
+            broker.holdings,
+            {"BTC/USDT": 0.5, "ETH/USDT": 3.0, "SOL/USDT": 40.0},
+        )
+
+    def test_reconcile_still_notices_a_non_primary_symbol_drifting(self):
+        broker = self.make_broker()
+        # simulate a fill on ETH/USDT the local cache never learned about.
+        self.exchange.balance = {
+            "free": {"USDT": 1_000.0, "BTC": 0.5, "ETH": 5.0, "SOL": 40.0},
+            "used": {}, "total": {},
+        }
+        report = broker.reconcile()
+        self.assertIn("holdings:ETH/USDT", report.corrected)
+        self.assertAlmostEqual(broker.holdings["ETH/USDT"], 5.0)
+        self.assertAlmostEqual(broker.holdings["SOL/USDT"], 40.0)
 
 
 class TestPaperBrokerReconcile(unittest.TestCase):
