@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from crypto_agent.brain.hippocampus import Hippocampus, _decision_bucket
+from crypto_agent.config import Config
 from crypto_agent.core.types import Signal
 
 
@@ -101,6 +102,77 @@ class TestDecisionReasons(unittest.TestCase):
         buckets = self.b1.decision_reasons(limit=2)
         self.assertEqual(sum(b["count"] for b in buckets), 2)
         self.assertEqual(buckets[0]["reason"], "opened a position")
+
+
+class TestCostHurdle(unittest.TestCase):
+    """Costs are fixed per trade; the move on offer scales with the bar. On a
+    fast enough timeframe the round trip is the whole range and nothing in the
+    gene space can win - which is a fact about the market, worth stating
+    plainly rather than leaving the agent to discover it one loss at a time.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.b1 = Hippocampus(Path(self.tmp.name) / "b1.sqlite3")
+
+    def tearDown(self):
+        self.b1.close()
+        self.tmp.cleanup()
+
+    def _store(self, bar_pct):
+        from crypto_agent.core.types import Candle
+        candles = []
+        price = 100.0
+        for i in range(300):
+            half = price * bar_pct / 2
+            candles.append(Candle(ts=i * 300_000, open=price, high=price + half,
+                                  low=price - half, close=price, volume=1.0))
+        self.b1.save_candles("BTC/USDT", "5m", candles)
+
+    def _hurdle(self, bar_pct, trip=0.003):
+        from crypto_agent.cli import _print_hurdle
+        import io
+        import contextlib
+        self._store(bar_pct)
+        cfg = Config(data_dir=self.tmp.name, symbol="BTC/USDT", timeframe="5m")
+
+        class Brain:
+            b1 = self.b1
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _print_hurdle(Brain(), cfg, trip)
+        return out.getvalue()
+
+    def test_a_fast_market_is_called_unwinnable(self):
+        # 0.1% bars against a 0.3% round trip: costs are 3x the whole range.
+        text = self._hurdle(0.001)
+        self.assertIn("more than a whole typical bar", text)
+        self.assertIn("1h", text)
+
+    def test_a_slow_market_gets_no_warning(self):
+        # 3% bars: the round trip is a tenth of the move on offer.
+        text = self._hurdle(0.03)
+        self.assertNotIn("more than a whole typical bar", text)
+        self.assertNotIn("Costs eat a large share", text)
+
+    def test_the_middle_case_is_flagged_as_tight_not_hopeless(self):
+        text = self._hurdle(0.005)
+        self.assertIn("Costs eat a large share", text)
+
+    def test_a_market_without_history_says_so_rather_than_failing(self):
+        from crypto_agent.cli import _print_hurdle
+        import io
+        import contextlib
+        cfg = Config(data_dir=self.tmp.name, symbol="BTC/USDT", timeframe="5m")
+
+        class Brain:
+            b1 = self.b1
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _print_hurdle(Brain(), cfg, 0.003)
+        self.assertIn("not enough cached history", out.getvalue())
 
 
 if __name__ == "__main__":  # pragma: no cover

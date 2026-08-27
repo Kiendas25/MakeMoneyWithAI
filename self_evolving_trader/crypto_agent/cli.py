@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sqlite3
+import statistics
 import sys
 import time
 import webbrowser
@@ -388,6 +389,46 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_hurdle(brain: Any, cfg: Config, trip: float) -> None:
+    """How big the round trip is next to a typical bar, in this market.
+
+    This is the number that decides whether profit is reachable at all on a
+    given timeframe. Costs are fixed per trade, while the move available to
+    capture scales with the bar, so on a fast timeframe the fee is most of the
+    range and no strategy in the gene space can win. Measured from the agent's
+    own cached candles rather than asserted, because it is entirely a property
+    of the market and settings actually in use.
+    """
+    from .data import indicators as ind
+
+    print("\ncost hurdle - a round trip as a share of a typical bar:")
+    worst = 0.0
+    for symbol in cfg.symbol_list:
+        candles = brain.b1.load_candles(symbol, cfg.timeframe, limit=400)
+        if len(candles) < 60:
+            print(f"  {symbol:<12} not enough cached history to measure")
+            continue
+        series = [a for a in ind.atr(candles, 14) if a]
+        closes = [c.close for c in candles if c.close > 0]
+        if not series or not closes:
+            continue
+        typical = statistics.median(series) / statistics.median(closes)
+        share = trip / typical if typical else float("inf")
+        worst = max(worst, share)
+        print(f"  {symbol:<12} typical bar {typical * 100:5.2f}%   "
+              f"round trip is {share * 100:5.1f}% of it")
+    if worst >= 1.0:
+        print("\n  The round trip costs more than a whole typical bar moves.")
+        print("  No strategy in the gene space can win here - a winner has to")
+        print("  catch several bars in a row, every time. Use a slower")
+        print("  timeframe (--timeframe 1h or 4h), where the same fixed cost")
+        print("  is a far smaller share of the move on offer.")
+    elif worst >= 0.4:
+        print("\n  Costs eat a large share of a typical bar. Workable, but the")
+        print("  strategy has to hold for several bars to clear them; a slower")
+        print("  timeframe would give it more room.")
+
+
 def cmd_why(args: argparse.Namespace) -> int:
     """Answer 'it is running but nothing is happening' from the ledger."""
     from .brain.memory import DualBrain
@@ -408,9 +449,9 @@ def cmd_why(args: argparse.Namespace) -> int:
             if b["reason"] != b["example"]:
                 print(f"          e.g. {b['example'][:96]}")
         floor = rules.min_edge_for(cfg)
+        trip = rules.round_trip_cost(cfg.fee_bps, cfg.slippage_bps)
         print(f"\ncost floor: a target must clear {floor * 100:.2f}% "
-              f"({cfg.min_edge_multiple:.2f}x the {rules.round_trip_cost(cfg.fee_bps, cfg.slippage_bps) * 100:.2f}% "
-              f"round trip)")
+              f"({cfg.min_edge_multiple:.2f}x the {trip * 100:.2f}% round trip)")
         risk_state = brain.b1.get_state(RISK_STATE_KEY) or {}
         if risk_state.get("halted"):
             print("risk: HALTED - run `resume-risk` to clear it")
@@ -418,6 +459,7 @@ def cmd_why(args: argparse.Namespace) -> int:
               f"{cfg.max_trades_per_day} trades used, "
               f"{cfg.max_open_positions} concurrent positions allowed "
               f"across {len(cfg.symbol_list)} markets")
+        _print_hurdle(brain, cfg, trip)
     return 0
 
 

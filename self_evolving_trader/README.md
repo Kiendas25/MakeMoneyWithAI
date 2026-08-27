@@ -32,7 +32,7 @@ cd self_evolving_trader
 # 250 steps of the entire loop on deterministic synthetic data, no network
 python3 -m crypto_agent demo --steps 400 --fresh
 
-# the tests (261, stdlib unittest, ~100s)
+# the tests (265, stdlib unittest, ~100s)
 python3 -m pytest tests -q
 ```
 
@@ -244,7 +244,26 @@ python3 -m crypto_agent why
 
 cost floor: a target must clear 0.45% (1.50x the 0.30% round trip)
 today: 6 of 40 trades used, 5 concurrent positions allowed across 5 markets
+
+cost hurdle - a round trip as a share of a typical bar:
+  BTC/USDT     typical bar  0.12%   round trip is 250.0% of it
+  ETH/USDT     typical bar  0.15%   round trip is 200.0% of it
+
+  The round trip costs more than a whole typical bar moves.
+  No strategy in the gene space can win here - a winner has to
+  catch several bars in a row, every time. Use a slower
+  timeframe (--timeframe 1h or 4h), where the same fixed cost
+  is a far smaller share of the move on offer.
 ```
+
+**The last block is the one that decides whether profit is reachable at all.**
+Costs are fixed per trade; the move available to capture scales with the bar.
+At 0.10% taker plus 0.05% slippage a side, a round trip is 0.30% — a large
+multiple of what a 5m candle typically moves, so on that timeframe a winner has
+to catch several consecutive bars *every time*, and no genome can. On 1h or 4h
+the same fixed cost is a small fraction of the range. The measurement comes
+from your own cached candles rather than from an assertion here, because it is
+entirely a property of the market and the fees you are actually paying.
 
 Every decision already recorded its action and its reason, so "it is running
 but nothing is happening" was always answerable from the ledger — it just had
@@ -431,7 +450,7 @@ crypto_agent/
   execution/
     broker.py           PaperBroker / CcxtBroker
     risk.py             limits, sizing, kill switch
-tests/                  261 tests, stdlib unittest (pytest-compatible)
+tests/                  265 tests, stdlib unittest (pytest-compatible)
 ```
 
 ## Working on the code with an AI assistant
