@@ -356,7 +356,20 @@ class EvolutionEngine:
         if current["id"] == best.genome.id:
             return False, current["id"]
 
-        incumbent = float(current.get("oos_fitness", 0.0))
+        # The incumbent's stored oos_fitness was deflated at whatever (smaller)
+        # trials count was current when it was crowned; challengers are always
+        # deflated at today's count, which only ever grows. Comparing the two
+        # numbers directly makes the bar drift upward every generation purely
+        # from the deflation formula - not from the incumbent getting any
+        # better - until eventually nothing can clear it. Recover the
+        # incumbent's undeflated score from its stored metrics and re-deflate
+        # it at the same trials count the challenger was just scored at, so
+        # both sides are judged under identical skepticism.
+        incumbent_metrics = current.get("metrics") or {}
+        incumbent_penalty_then = float(incumbent_metrics.get("deflation_penalty", 0.0) or 0.0)
+        incumbent_raw = float(current.get("oos_fitness", 0.0)) + incumbent_penalty_then
+        penalty_now = _deflation_penalty(best.trials) if self.cfg.trials_penalty else 0.0
+        incumbent = incumbent_raw - penalty_now
         required = incumbent + self.cfg.promotion_margin * max(1.0, abs(incumbent))
         if best.oos_fitness > required and best.oos_fitness > 0:
             self._install_champion(
@@ -418,7 +431,14 @@ class EvolutionEngine:
                 continue  # too close to something we already have; try again
             next_gen.append(child)
         while len(next_gen) < self.cfg.population_size:  # diversity guard exhausted
-            next_gen.append(Genome.random(self.rng, generation))
+            # Every other breeding path clamps allow_short to the configured
+            # setting; this fallback must too, or a long-only configuration
+            # can silently acquire short-capable genomes whenever the
+            # diversity guard runs out of tries.
+            filler = Genome.random(self.rng, generation)
+            if not self.cfg.allow_short:
+                filler.genes["allow_short"] = False
+            next_gen.append(filler)
         return next_gen[: self.cfg.population_size]
 
     def _tournament(self, evaluations: Sequence[Evaluation]) -> Genome:

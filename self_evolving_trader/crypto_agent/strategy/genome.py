@@ -176,13 +176,26 @@ class Genome:
 
     def crossover(self, other: "Genome", rng: random.Random,
                   generation: Optional[int] = None) -> "Genome":
-        """Uniform crossover; numeric genes may also blend."""
+        """Uniform crossover; numeric genes may also blend.
+
+        Which parent a gene picks (``pick_roll``) and whether the gene picks
+        discretely at all versus blends (``mode_roll``) must be independent
+        rolls. Reusing one roll for both (as in ``a if roll < 0.5 else b``
+        gated by ``roll < 0.4``) silently makes the discrete branch always
+        resolve to ``a``, since ``roll < 0.4`` already implies ``roll < 0.5`` -
+        parent B then never contributes a numeric gene on its own, only ever
+        diluted into a blend.
+        """
         child: Dict[str, Any] = {}
         for name, spec in GENE_SPECS.items():
             a, b = self.genes[name], other.genes[name]
-            roll = rng.random()
-            if spec.kind == "bool" or roll < 0.4:
-                child[name] = a if roll < 0.5 else b
+            pick_roll = rng.random()
+            if spec.kind == "bool":
+                child[name] = a if pick_roll < 0.5 else b
+                continue
+            mode_roll = rng.random()
+            if mode_roll < 0.4:
+                child[name] = a if pick_roll < 0.5 else b
             else:
                 mix = rng.uniform(0.2, 0.8)
                 child[name] = spec.clamp(float(a) * mix + float(b) * (1.0 - mix))
