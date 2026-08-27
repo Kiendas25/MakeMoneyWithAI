@@ -95,6 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--open", dest="open_browser", action="store_true",
                       help="open the result in your browser")
 
+    vault = sub.add_parser("obsidian", help="export both brains into an Obsidian vault")
+    vault.add_argument("--vault", default=None,
+                       help="vault directory (default: <data-dir>/vault)")
+
     sub.add_parser("resume-risk", help="clear a drawdown halt (operator action)")
     return parser
 
@@ -168,6 +172,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "memory": cmd_memory,
         "report": cmd_report,
         "dashboard": cmd_dashboard,
+        "obsidian": cmd_obsidian,
         "resume-risk": cmd_resume_risk,
     }[args.command]
     return handler(args)
@@ -366,6 +371,18 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     print(f"dashboard written to {path}")
     if args.open_browser:
         webbrowser.open(Path(path).as_uri())
+    return 0
+
+
+def cmd_obsidian(args: argparse.Namespace) -> int:
+    from .brain.memory import DualBrain
+    from .brain.obsidian import export_vault
+
+    cfg = config_from_args(args, adopt_stored=True)
+    target = Path(args.vault) if args.vault else cfg.root / "vault"
+    with DualBrain(cfg) as brain:
+        report = export_vault(brain, cfg, target)
+    print(report.summary())
     return 0
 
 

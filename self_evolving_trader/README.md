@@ -32,7 +32,7 @@ cd self_evolving_trader
 # 250 steps of the entire loop on deterministic synthetic data, no network
 python3 -m crypto_agent demo --steps 400 --fresh
 
-# the tests (188, stdlib unittest, ~90s)
+# the tests (228, stdlib unittest, ~75s)
 python3 -m pytest tests -q
 ```
 
@@ -228,6 +228,7 @@ python3 -m crypto_agent evolve -g 5                # run generations now
 python3 -m crypto_agent status                     # full state as JSON
 python3 -m crypto_agent memory -q "downtrend high vol long"
 python3 -m crypto_agent report                     # trades, evolution, events
+python3 -m crypto_agent obsidian                   # export both brains to an Obsidian vault
 python3 -m crypto_agent resume-risk                # clear a drawdown halt
 ```
 
@@ -257,6 +258,33 @@ touching the exchange, so it is safe to run while the agent trades.
 
 Global flags: `--config`, `--data-dir`, `--symbol`, `--timeframe`, `--provider`,
 `--exchange`, `--mode`, `--seed`, `--log-level`.
+
+## Obsidian vault — reading the agent's mind
+
+```bash
+python3 -m crypto_agent obsidian                    # writes <data-dir>/vault
+python3 -m crypto_agent obsidian --vault ~/MyVault  # or somewhere you already sync
+```
+
+Then *Open folder as vault* in Obsidian. The dashboard is for watching; the
+vault is for **arguing back**. Brain 2 already stores its lessons in English,
+so the export gives each one a note with YAML frontmatter, links every lesson
+to the markets it came from, and adds a monthly trade ledger and an `index.md`
+overview. The graph view then shows which coins a lesson actually touches, and
+search finds the note about the regime that keeps losing money.
+
+Two properties make it safe to keep in a synced folder:
+
+- **Idempotent.** Re-exporting unchanged data rewrites nothing — no mtime
+  churn, no sync noise.
+- **Your text survives.** Generated content lives between
+  `<!-- agent:begin generated -->` and `<!-- agent:end generated -->`; anything
+  you write outside those markers is copied through untouched. A note *you*
+  created (no markers at all) is appended to, never overwritten.
+
+SQLite stays the single source of truth. The export only ever writes markdown,
+so a hand-edited or corrupted vault cannot feed bad state back into the agent —
+the worst case is a stale note.
 
 ## Configuration
 
@@ -295,6 +323,7 @@ crypto_agent/
     cortex.py           Brain 2 — vector memory with decay and pruning
     embeddings.py       stable hashing embedder (no model, no network)
     memory.py           DualBrain: consolidation and decision-time advice
+    obsidian.py         markdown mirror of both brains, safe to hand-edit
   strategy/
     genome.py           the evolvable parameter vector
     rules.py            one signal engine shared by live and backtest
@@ -305,8 +334,31 @@ crypto_agent/
   execution/
     broker.py           PaperBroker / CcxtBroker
     risk.py             limits, sizing, kill switch
-tests/                  188 tests, stdlib unittest (pytest-compatible)
+tests/                  228 tests, stdlib unittest (pytest-compatible)
 ```
+
+## Working on the code with an AI assistant
+
+The repo ships a [Graphify](https://github.com/Graphify-Labs/graphify) skill in
+`.claude/`, which turns the codebase into a queryable knowledge graph — 1030
+nodes, 2426 edges, 59 communities at the time of writing — so an assistant can
+ask *"what calls the risk engine?"* and get a scoped subgraph instead of
+grepping and reading whole files.
+
+```bash
+pip install graphify-cli          # or: pipx install graphify-cli
+graphify update .                 # (re)build the graph, AST-only, no API cost
+graphify query "how does a signal become an order?"
+graphify explain "TradingAgent"
+graphify path "Genome" "PaperBroker"
+```
+
+`graphify-out/GRAPH_REPORT.md` is checked in and readable without the tool.
+The multi-megabyte `graph.json`, the HTML viewer and the AST cache are
+generated, so they are gitignored — run `graphify update .` to rebuild them.
+`.claude/settings.json` is gitignored too: the hooks it writes hardcode an
+absolute path to the `graphify` binary, which is per-machine. Regenerate it
+with `graphify install --project --platform claude`.
 
 ## Prior art this builds on
 
