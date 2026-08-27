@@ -257,13 +257,16 @@ class TradingAgent:
         exit_price = rules.exit_price_for(reason, position, candle)
         side = "sell" if position.qty > 0 else "buy"
         fill = self.broker.market_order(side, abs(position.qty), exit_price, candle.ts, symbol)
-        entry_notional = abs(position.entry_price * position.qty)
+        closed_qty = abs(getattr(fill, "qty", abs(position.qty)) or 0.0) or abs(position.qty)
+        closed_qty = min(closed_qty, abs(position.qty))
+        signed_closed = closed_qty * (1 if position.qty > 0 else -1)
+        entry_notional = abs(position.entry_price * signed_closed)
         entry_fee = entry_notional * (self.cfg.fee_bps / 10_000.0)
-        pnl = (fill.price - position.entry_price) * position.qty - fill.fee - entry_fee
+        pnl = (fill.price - position.entry_price) * signed_closed - fill.fee - entry_fee
         trade = Trade(
             symbol=symbol,
             side=position.side,
-            qty=abs(position.qty),
+            qty=closed_qty,
             entry_ts=position.entry_ts,
             entry_price=position.entry_price,
             exit_ts=candle.ts,
@@ -277,7 +280,20 @@ class TradingAgent:
             regime=position.regime,
         )
         self.brain.remember_trade(trade)
-        self.brain.b1.save_position(symbol, None)
+        # A partial exit leaves real exposure behind. Clearing the whole position
+        # would orphan it: still held on the exchange, invisible to every risk
+        # check, with nothing left to trigger its stop. Keep managing what did
+        # not sell.
+        remainder = abs(position.qty) - closed_qty
+        if remainder > abs(position.qty) * 1e-6:
+            position.qty = remainder * (1 if position.qty > 0 else -1)
+            self.brain.b1.save_position(symbol, position)
+            self.brain.b1.log_event(
+                "exit_partial",
+                f"{symbol}: exited {closed_qty:.8f}, still holding {remainder:.8f}",
+                {"closed": closed_qty, "remaining": remainder}, level="WARNING")
+        else:
+            self.brain.b1.save_position(symbol, None)
         marks = dict(prices or {})
         marks[symbol] = candle.close
         equity_after = self.broker.equity(marks)
@@ -352,10 +368,30 @@ class TradingAgent:
 
         side = "buy" if signal.direction > 0 else "sell"
         fill = self.broker.market_order(side, decision.qty, entry_hint, candle.ts, symbol)
+        # Record what the exchange actually filled, never what we asked for. A
+        # step-rounded or partially filled live order leaves the real balance
+        # smaller than the request, and a position built from the request would
+        # size every later stop, exit and risk check against inventory that does
+        # not exist - and the exit order would then be rejected outright.
+        filled_qty = abs(getattr(fill, "qty", decision.qty) or 0.0)
+        if filled_qty <= 0:
+            self.brain.b1.log_event(
+                "fill_empty", f"{symbol}: order returned no fill; standing aside",
+                {"requested": decision.qty}, level="WARNING")
+            self.brain.b1.record_decision(
+                candle.ts, symbol, "open:unfilled", signal, genome.id, executed=False)
+            return StepResult(
+                candle.ts, candle.close, equity, "open:unfilled",
+                "order returned no fill", symbol=symbol, signal=signal, bias=bias)
+        if abs(filled_qty - decision.qty) > decision.qty * 1e-6:
+            self.brain.b1.log_event(
+                "fill_partial",
+                f"{symbol}: filled {filled_qty:.8f} of {decision.qty:.8f} requested",
+                {"requested": decision.qty, "filled": filled_qty}, level="WARNING")
         stop, take_profit = rules.initial_stops(genome, frame, i, fill.price, signal.direction)
         position = Position(
             symbol=symbol,
-            qty=decision.qty * signal.direction,
+            qty=filled_qty * signal.direction,
             entry_price=fill.price,
             entry_ts=candle.ts,
             stop=stop,
@@ -371,7 +407,7 @@ class TradingAgent:
         )
         return StepResult(
             candle.ts, candle.close, equity, f"open:{position.side}",
-            f"opened {position.side} {decision.qty:.6f} at {fill.price:,.2f} "
+            f"opened {position.side} {abs(position.qty):.6f} at {fill.price:,.2f} "
             f"(stop {stop or 0:,.2f}, target {take_profit or 0:,.2f}; {bias.describe()})",
             symbol=symbol, signal=signal, bias=bias,
         )
