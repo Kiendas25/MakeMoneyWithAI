@@ -182,7 +182,16 @@ def initial_stops(genome: Genome, frame: Frame, i: int, entry_price: float,
 
 
 def update_trailing_stop(genome: Genome, frame: Frame, i: int, position: Position) -> Optional[float]:
-    """Ratchet the stop toward price; never loosen it."""
+    """Ratchet the stop toward price using bar ``i``'s close; never loosen it.
+
+    The close of bar ``i`` is only known once bar ``i`` has finished
+    printing, so the level this returns must not be tested against bar
+    ``i`` itself - callers must check ``exit_reason`` against the stop
+    already in force *before* calling this, and only store this return
+    value for bar ``i + 1`` onward. Testing bar i's low/high against a stop
+    this same call just moved is lookahead: it lets the exit see the end of
+    the bar before deciding what happened during the bar.
+    """
     mult = float(genome.genes["trail_atr_mult"])
     atr = frame.atr[i]
     if mult <= 0 or not atr:
@@ -202,6 +211,13 @@ def exit_reason(genome: Genome, frame: Frame, i: int, position: Position,
     Checked against the *current* bar's extremes, with the stop taking priority
     over the target when a single bar spans both - the pessimistic assumption,
     because assuming the good fill is how backtests learn to lie.
+
+    ``position.stop`` must be the level that was already in force before bar
+    ``i`` opened - i.e. whatever ``update_trailing_stop`` returned for bar
+    ``i - 1``, not a ratchet computed from bar ``i``'s own close. Checking a
+    bar against a stop derived from that same bar's close is lookahead: the
+    stop would be "known" before the bar's low/high happened, when it was
+    really only known after.
     """
     candle = frame.candles[i]
     long = position.qty > 0

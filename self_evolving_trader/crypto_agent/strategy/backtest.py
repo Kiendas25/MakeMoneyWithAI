@@ -83,7 +83,14 @@ def simulate(
 
         if position is not None:
             position.bars_held += 1
-            position.stop = rules.update_trailing_stop(genome, frame, i, position)
+            # Test the stop that was already in force *before* this bar opened.
+            # Ratcheting with bar i's close and then checking that new level
+            # against bar i's own low/high is lookahead: it uses information
+            # only known at the bar's end to decide something about the whole
+            # bar, including the part that came before that close printed. The
+            # ratchet computed from bar i's close is applied below only when
+            # the position survives the bar, so it takes effect starting bar
+            # i + 1, once that close is actually old news.
             reason = rules.exit_reason(genome, frame, i, position, signal)
             if reason:
                 raw_price = rules.exit_price_for(reason, position, candle)
@@ -113,6 +120,11 @@ def simulate(
                 )
                 position = None
                 open_fees = 0.0
+            else:
+                # The position survived bar i's own stop check, so now - and
+                # only now - fold bar i's close into the trailing stop for
+                # bar i + 1 to test.
+                position.stop = rules.update_trailing_stop(genome, frame, i, position)
 
         if position is None and signal.direction != 0:
             equity_now = cash
@@ -179,8 +191,13 @@ def simulate(
 
     # Every result is measured against the trivial "just buy it" strategy on
     # the same window, so a genome that only out-trades a falling market still
-    # reads as the failure it is.
-    benchmark_return = buy_and_hold(candles, cfg).total_return
+    # reads as the failure it is. That window must be exactly the bars the
+    # strategy was allowed to trade - candles[frame.warmup:] - not the full
+    # history including candles the genome never saw a signal for. Pricing
+    # the benchmark over the full range mixes in pre-warmup drift the
+    # strategy could not possibly have captured or avoided, and skews
+    # excess_return, which carries most of the fitness weight.
+    benchmark_return = buy_and_hold(candles[frame.warmup:], cfg).total_return
     metrics = compute_metrics(
         equity_curve,
         trades,

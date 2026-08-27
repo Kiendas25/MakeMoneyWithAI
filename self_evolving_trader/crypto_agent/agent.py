@@ -238,10 +238,16 @@ class TradingAgent:
     ) -> StepResult:
         candle = frame.candles[i]
         position.bars_held += 1
-        position.stop = rules.update_trailing_stop(genome, frame, i, position)
+        # Same ordering as the backtester, for the same reason: test the stop
+        # that was already in force before this bar opened. Ratcheting with bar
+        # i's close and then checking that new level against bar i's own
+        # low/high is lookahead, and doing it here but not there would recreate
+        # the live-versus-backtest divergence the shared rule engine exists to
+        # prevent. The ratchet is applied below, taking effect from bar i + 1.
         reason = rules.exit_reason(genome, frame, i, position, signal)
 
         if not reason:
+            position.stop = rules.update_trailing_stop(genome, frame, i, position)
             self.brain.b1.save_position(symbol, position)
             self.brain.b1.record_decision(
                 candle.ts, symbol, "hold", signal, genome.id, executed=False

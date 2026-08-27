@@ -70,11 +70,42 @@ class RiskManager:
 
     def resume(self) -> None:
         """Manual restart after a kill switch. Never called automatically -
-        an agent that can un-halt itself has no kill switch."""
-        self.state.update({"halted": False, "halt_reason": ""})
-        self.state["day_start_equity"] = self.state.get("peak_equity", self.cfg.start_cash)
+        an agent that can un-halt itself has no kill switch.
+
+        Clearing ``halted`` alone is not a real resume: ``peak_equity`` would
+        stay at the pre-crash high, so the very next ``observe_equity()``
+        recomputes the identical drawdown and re-halts before a single order
+        goes out, and ``day_start_equity`` would stay there too, so
+        ``daily_loss_pct()`` instantly exceeds the daily limit as well. Both
+        watermarks are re-baselined here to the current equity, so the agent
+        resumes measuring from where it actually is instead of from a peak
+        it will never see again.
+        """
+        equity = self._current_equity()
+        self.state.update({
+            "halted": False,
+            "halt_reason": "",
+            "peak_equity": equity,
+            "day_start_equity": equity,
+        })
         self._save()
-        self.brain.log_event("resume", "risk halt cleared by operator")
+        self.brain.log_event("resume", f"risk halt cleared by operator at equity {equity:.2f}")
+
+    def _current_equity(self) -> float:
+        """Best available estimate of current equity, for re-baselining on resume.
+
+        Brain 1 records an equity snapshot on every cycle (see
+        ``Hippocampus.record_equity``), stamped with the same reading that
+        ``observe_equity()`` just saw - including the one that caused the
+        halt - so the newest row is what the operator is actually looking at
+        when they resume. Fall back to the last known peak, then to the
+        configured starting cash, for the rare case of a resume with no
+        recorded equity history at all (e.g. a fresh state in a test).
+        """
+        curve = self.brain.equity_curve(limit=1)
+        if curve:
+            return float(curve[0]["equity"])
+        return float(self.state.get("peak_equity", self.cfg.start_cash))
 
     # ------------------------------------------------------------------
     def observe_equity(self, equity: float, now_ms: Optional[int] = None) -> None:
@@ -262,7 +293,16 @@ class RiskManager:
             }
             return clusters, pairs
 
-        clusters, pairs = cluster_symbols(price_history, self.cfg.correlation_threshold)
+        # Measure correlation over the trailing window the operator configured,
+        # not over however much history the caller happens to be holding -
+        # otherwise cfg.correlation_window is documented but silently ignored,
+        # and a stale correlation from months ago outweighs the last few days.
+        window = self.cfg.correlation_window
+        windowed = {
+            sym: series[-window:] if window > 0 else series
+            for sym, series in price_history.items()
+        }
+        clusters, pairs = cluster_symbols(windowed, self.cfg.correlation_threshold)
         self.brain.set_state(cache_key, {
             "bar_ts": bar_ts,
             "clusters": clusters,

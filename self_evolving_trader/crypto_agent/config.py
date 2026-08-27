@@ -1,6 +1,12 @@
 """Configuration for the autonomous agent.
 
-Precedence: explicit kwargs > JSON config file > environment > defaults.
+Precedence: explicit kwargs > environment > JSON config file > defaults.
+
+A deployed agent is typically started from one JSON file baked into its
+image or checkout, with the environment used for per-deployment overrides
+(secrets, host-specific tuning) layered on top without editing that file -
+so environment intentionally beats the file, and only an explicit keyword
+argument (e.g. from a test or a CLI flag) beats the environment.
 Every field is deliberately boring and inspectable; the agent writes the
 resolved config into Brain 1 on every boot so a run can be reproduced.
 """
@@ -177,6 +183,8 @@ class Config:
             raise ValueError("max_correlated_exposure_pct must be in (0, 1]")
         if not 0 <= self.correlation_threshold <= 1.0:
             raise ValueError("correlation_threshold must be in [0, 1]")
+        if self.correlation_window < 2:
+            raise ValueError("correlation_window must be at least 2 bars")
         if self.walk_forward_folds < 1:
             raise ValueError("walk_forward_folds must be at least 1")
         if not 0 <= self.benchmark_weight <= 1.0:
