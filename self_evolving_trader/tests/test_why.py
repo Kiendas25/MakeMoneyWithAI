@@ -119,7 +119,7 @@ class TestCostHurdle(unittest.TestCase):
         self.b1.close()
         self.tmp.cleanup()
 
-    def _store(self, bar_pct):
+    def _store_for(self, symbol, bar_pct):
         from crypto_agent.core.types import Candle
         candles = []
         price = 100.0
@@ -127,7 +127,10 @@ class TestCostHurdle(unittest.TestCase):
             half = price * bar_pct / 2
             candles.append(Candle(ts=i * 300_000, open=price, high=price + half,
                                   low=price - half, close=price, volume=1.0))
-        self.b1.save_candles("BTC/USDT", "5m", candles)
+        self.b1.save_candles(symbol, "5m", candles)
+
+    def _store(self, bar_pct):
+        self._store_for("BTC/USDT", bar_pct)
 
     def _hurdle(self, bar_pct, trip=0.003):
         from crypto_agent.cli import _print_hurdle
@@ -147,14 +150,43 @@ class TestCostHurdle(unittest.TestCase):
     def test_a_fast_market_is_called_unwinnable(self):
         # 0.1% bars against a 0.3% round trip: costs are 3x the whole range.
         text = self._hurdle(0.001)
-        self.assertIn("more than a whole typical bar", text)
+        self.assertIn("more than a typical bar", text)
         self.assertIn("1h", text)
+
+    def test_one_costly_market_does_not_condemn_nine_good_ones(self):
+        # The bug this fixes: reading the verdict off the worst market called
+        # a universe "tight" when nine of its ten coins were comfortable.
+        from crypto_agent.core.types import Candle
+        from crypto_agent.cli import _print_hurdle
+        import io
+        import contextlib
+        symbols = []
+        for i in range(9):
+            name = f"C{i}/USDT"
+            symbols.append(name)
+            self._store_for(name, 0.02)          # comfortable
+        self._store_for("THIN/USDT", 0.004)      # 75% of a bar
+        symbols.append("THIN/USDT")
+        cfg = Config(data_dir=self.tmp.name, symbol=symbols[0],
+                     symbols=",".join(symbols[1:]), timeframe="5m")
+
+        class Brain:
+            b1 = self.b1
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _print_hurdle(Brain(), cfg, 0.003)
+        text = out.getvalue()
+        self.assertIn("Playable", text)
+        self.assertIn("THIN/USDT", text)
+        self.assertIn("outliers", text)
 
     def test_a_slow_market_gets_no_warning(self):
         # 3% bars: the round trip is a tenth of the move on offer.
         text = self._hurdle(0.03)
-        self.assertNotIn("more than a whole typical bar", text)
+        self.assertNotIn("more than a typical bar", text)
         self.assertNotIn("Costs eat a large share", text)
+        self.assertIn("Playable", text)
 
     def test_the_middle_case_is_flagged_as_tight_not_hopeless(self):
         text = self._hurdle(0.005)

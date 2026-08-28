@@ -402,7 +402,7 @@ def _print_hurdle(brain: Any, cfg: Config, trip: float) -> None:
     from .data import indicators as ind
 
     print("\ncost hurdle - a round trip as a share of a typical bar:")
-    worst = 0.0
+    shares: Dict[str, float] = {}
     for symbol in cfg.symbol_list:
         candles = brain.b1.load_candles(symbol, cfg.timeframe, limit=400)
         if len(candles) < 60:
@@ -414,19 +414,35 @@ def _print_hurdle(brain: Any, cfg: Config, trip: float) -> None:
             continue
         typical = statistics.median(series) / statistics.median(closes)
         share = trip / typical if typical else float("inf")
-        worst = max(worst, share)
+        shares[symbol] = share
         print(f"  {symbol:<12} typical bar {typical * 100:5.2f}%   "
               f"round trip is {share * 100:5.1f}% of it")
-    if worst >= 1.0:
-        print("\n  The round trip costs more than a whole typical bar moves.")
+    if not shares:
+        return
+
+    # Judge the universe by its median market, not its worst. One thin coin
+    # among ten does not make the other nine unplayable, and reading the
+    # verdict off the maximum said "tight" about a universe where nine
+    # markets were comfortable - so name the outliers instead of letting
+    # them speak for everyone.
+    middle = statistics.median(shares.values())
+    steep = sorted((s for s, v in shares.items() if v >= 0.4), key=lambda s: -shares[s])
+    if middle >= 1.0:
+        print("\n  The round trip costs more than a typical bar moves.")
         print("  No strategy in the gene space can win here - a winner has to")
         print("  catch several bars in a row, every time. Use a slower")
         print("  timeframe (--timeframe 1h or 4h), where the same fixed cost")
         print("  is a far smaller share of the move on offer.")
-    elif worst >= 0.4:
+    elif middle >= 0.4:
         print("\n  Costs eat a large share of a typical bar. Workable, but the")
         print("  strategy has to hold for several bars to clear them; a slower")
         print("  timeframe would give it more room.")
+    else:
+        print(f"\n  Playable: the median market gives up {middle * 100:.0f}% of a")
+        print("  typical bar to costs, so a winner does not need a miracle.")
+    if steep and middle < 0.4:
+        names = ", ".join(f"{s} ({shares[s] * 100:.0f}%)" for s in steep)
+        print(f"  Costly outliers, worth dropping from the universe: {names}")
 
 
 def cmd_why(args: argparse.Namespace) -> int:

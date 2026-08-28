@@ -32,7 +32,7 @@ cd self_evolving_trader
 # 250 steps of the entire loop on deterministic synthetic data, no network
 python3 -m crypto_agent demo --steps 400 --fresh
 
-# the tests (265, stdlib unittest, ~100s)
+# the tests (266, stdlib unittest, ~100s)
 python3 -m pytest tests -q
 ```
 
@@ -450,7 +450,7 @@ crypto_agent/
   execution/
     broker.py           PaperBroker / CcxtBroker
     risk.py             limits, sizing, kill switch
-tests/                  265 tests, stdlib unittest (pytest-compatible)
+tests/                  266 tests, stdlib unittest (pytest-compatible)
 ```
 
 ## Working on the code with an AI assistant
