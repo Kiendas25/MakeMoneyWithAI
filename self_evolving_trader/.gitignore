@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+agent_data/
+agent_data_*/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.pytest_cache/

@@ -3,3 +3,12 @@
 venv/
 .DS_Store
 *.iml
+# graphify: the skill + the human-readable report are checked in; the
+# machine artifacts (multi-MB graph, viewer, AST cache) are regenerable
+# with `graphify update .` and would churn on every commit.
+**/graphify-out/*
+!**/graphify-out/GRAPH_REPORT.md
+
+# hooks written by `graphify install` hardcode an absolute binary path,
+# so they are per-machine, not per-repo.
+.claude/settings.json

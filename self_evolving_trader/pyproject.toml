@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "self-evolving-crypto-agent"
+version = "1.0.0"
+description = "Autonomous, self-evolving crypto trading agent with a two-brain memory"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []          # the agent core runs on the standard library alone
+
+[project.optional-dependencies]
+exchange = ["ccxt>=4.2"]   # live trading and non-Binance market data
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+crypto-agent = "crypto_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["crypto_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
